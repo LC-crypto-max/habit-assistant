@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>个人兴趣助手</title>
+  <style>
+    :root {
+      --bg: #f7f9fc;
+      --surface: #ffffff;
+      --surface-soft: #f1f5f9;
+      --line: #e2e8f0;
+      --text: #182230;
+      --muted: #667085;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --success: #047857;
+      --warning: #b45309;
+      --danger: #b42318;
+      --radius: 8px;
+      --space: 16px;
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+    }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .topbar-inner {
+      width: min(1200px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 22px 0;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: var(--space);
+      align-items: center;
+    }
+
+    .eyebrow {
+      margin: 0 0 6px;
+      color: var(--primary);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    h1, h2, h3, p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      font-size: 26px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin-bottom: 14px;
+      font-size: 17px;
+      line-height: 1.35;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 15px;
+      line-height: 1.4;
+    }
+
+    .subtle {
+      margin-bottom: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    main {
+      width: min(1200px, calc(100% - 32px));
+      margin: 18px auto 36px;
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: var(--space);
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: var(--space);
+    }
+
+    .stack {
+      display: grid;
+      gap: var(--space);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--space);
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    label {
+      color: #344054;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--text);
+      padding: 10px 11px;
+      font: inherit;
+      outline: none;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+    }
+
+    button {
+      border: 0;
+      border-radius: 7px;
+      padding: 10px 14px;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .15s ease, opacity .15s ease;
+    }
+
+    button:hover {
+      background: var(--primary-hover);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .62;
+    }
+
+    button.secondary {
+      background: #e7edf6;
+      color: #1f2937;
+    }
+
+    button.secondary:hover {
+      background: #dbe4f0;
+    }
+
+    button.ghost {
+      background: #fff;
+      color: var(--primary);
+      border: 1px solid var(--line);
+    }
+
+    button.ghost:hover {
+      background: #eff6ff;
+    }
+
+    .status {
+      border-radius: var(--radius);
+      padding: 11px 12px;
+      background: var(--surface-soft);
+      color: #344054;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .status.ok {
+      background: #ecfdf3;
+      color: var(--success);
+    }
+
+    .status.warn {
+      background: #fff7ed;
+      color: var(--warning);
+    }
+
+    .status.error {
+      background: #fef3f2;
+      color: var(--danger);
+    }
+
+    .metric {
+      display: grid;
+      gap: 4px;
+      padding: 12px;
+      border-radius: var(--radius);
+      background: var(--surface-soft);
+    }
+
+    .metric strong {
+      font-size: 18px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .terms {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .term {
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .recommendations {
+      display: grid;
+      gap: 12px;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 14px;
+      background: #fff;
+    }
+
+    .item a {
+      color: #1d4ed8;
+      text-decoration: none;
+    }
+
+    .item a:hover {
+      text-decoration: underline;
+    }
+
+    .meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 12px;
+      margin: 8px 0;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      padding: 4px 8px;
+    }
+
+    .empty {
+      color: var(--muted);
+      background: var(--surface-soft);
+      border-radius: var(--radius);
+      padding: 18px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    .code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      background: #0f172a;
+      color: #dbeafe;
+      padding: 10px;
+      border-radius: 7px;
+      overflow: auto;
+      white-space: nowrap;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 920px) {
+      .topbar-inner, main {
+        width: min(100% - 24px, 760px);
+      }
+
+      .topbar-inner, main, .grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <p class="eyebrow">Habit Assistant</p>
+        <h1>个人兴趣画像与内容推荐后台</h1>
+        <p class="subtle">收集搜索、浏览、观看和反馈行为，为不同用户生成画像，并自动刷新可点击的推荐链接。</p>
+      </div>
+      <button id="forceBtn" type="button">强制重算推荐</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="stack">
+      <section class="card">
+        <h2>当前用户</h2>
+        <div class="field">
+          <label for="userId">用户 ID</label>
+          <input id="userId" value="me" autocomplete="off" placeholder="例如：alice">
+          <div class="hint">本地协作阶段通过 userId 区分用户；正式上线建议接入登录态。</div>
+        </div>
+        <div class="row">
+          <button id="loadBtn" class="secondary" type="button">检查推荐</button>
+        </div>
+      </section>
+
+      <section class="card stack">
+        <div class="metric">
+          <span>推荐刷新策略</span>
+          <strong id="refreshHours">-- 小时</strong>
+        </div>
+        <div class="metric">
+          <span>近 24 小时行为</span>
+          <strong id="activityCount">-- 条</strong>
+        </div>
+        <div id="status" class="status" role="status">页面打开后会自动检查推荐是否过期。</div>
+      </section>
+
+      <section class="card">
+        <h2>画像关键词</h2>
+        <div id="terms" class="terms"></div>
+      </section>
+
+      <section class="card stack">
+        <h2>本地采集</h2>
+        <p class="subtle">脚本需要用户手动触发，不会静默读取本机数据。</p>
+        <div class="code">.\scripts\import-browser-history.ps1 -UserId me -Browser edge</div>
+        <div class="code">.\scripts\collect-app-usage.ps1 -UserId me -ProcessName bilibili</div>
+      </section>
+    </aside>
+
+    <div class="stack">
+      <section class="card stack">
+        <div>
+          <h2>搜索关键词并生成推荐</h2>
+          <p class="subtle">输入你当前感兴趣的关键词，系统会记录搜索行为，并立即刷新推荐。</p>
+        </div>
+        <div class="row">
+          <input id="keyword" style="flex:1 1 260px" placeholder="例如：Java Agent、AI 编程、B站剪辑">
+          <select id="keywordPlatform" style="flex:0 0 160px">
+            <option value="web-search">网页搜索</option>
+            <option value="baidu">百度</option>
+            <option value="bilibili">哔哩哔哩</option>
+            <option value="x">Twitter/X</option>
+          </select>
+          <button id="searchBtn" type="button">搜索并推荐</button>
+        </div>
+      </section>
+
+      <section class="grid-2">
+        <div class="card">
+          <h2>提交访问记录</h2>
+          <div class="field">
+            <label for="visitTitle">标题</label>
+            <input id="visitTitle" placeholder="页面标题">
+          </div>
+          <div class="field">
+            <label for="visitUrl">链接</label>
+            <input id="visitUrl" placeholder="https://example.com/article">
+          </div>
+          <div class="grid-2" style="gap:12px">
+            <div class="field">
+              <label for="visitPlatform">平台</label>
+              <input id="visitPlatform" placeholder="browser / bilibili">
+            </div>
+            <div class="field">
+              <label for="visitTags">标签</label>
+              <input id="visitTags" placeholder="用逗号分隔">
+            </div>
+          </div>
+          <button id="visitBtn" type="button">提交访问</button>
+        </div>
+
+        <div class="card">
+          <h2>提交行为</h2>
+          <div class="grid-2" style="gap:12px">
+            <div class="field">
+              <label for="activityType">类型</label>
+              <select id="activityType">
+                <option value="WATCH">观看</option>
+                <option value="VISIT">访问</option>
+                <option value="SEARCH">搜索</option>
+                <option value="LIKE">喜欢</option>
+                <option value="FAVORITE">收藏</option>
+                <option value="DISLIKE">不感兴趣</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="activityPlatform">平台</label>
+              <input id="activityPlatform" placeholder="bilibili / x / local-app">
+            </div>
+          </div>
+          <div class="field">
+            <label for="activityText">内容</label>
+            <textarea id="activityText" placeholder="记录你刚刚看的内容、搜索词或想法"></textarea>
+          </div>
+          <button id="activityBtn" type="button">提交行为</button>
+        </div>
+      </section>
+
+      <section class="card stack">
+        <div class="toolbar">
+          <div>
+            <h2 style="margin-bottom:4px">今日推荐</h2>
+            <p id="policy" class="subtle"></p>
+          </div>
+          <button id="refreshBtn" class="secondary" type="button">刷新列表</button>
+        </div>
+        <div id="recommendations" class="recommendations"></div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const busyButtons = new Set();
+
+    function userId() {
+      return $("userId").value.trim() || "me";
+    }
+
+    function setStatus(message, type = "") {
+      const el = $("status");
+      el.className = `status ${type}`;
+      el.textContent = message;
+    }
+
+    function friendlyError(error) {
+      const message = error && error.message ? error.message : "请求失败，请稍后重试。";
+      if (message.includes("Failed to fetch")) {
+        return "无法连接后端服务，请确认 Spring Boot 已启动。";
+      }
+      if (message.includes("VALIDATION_ERROR")) {
+        return "表单内容不完整，请检查必填项。";
+      }
+      return message.length > 160 ? "接口返回异常，请查看后端日志。" : message;
+    }
+
+    function setBusy(button, busy, text) {
+      if (!button) return;
+      if (busy) {
+        if (!busyButtons.has(button)) {
+          button.dataset.label = button.textContent;
+          busyButtons.add(button);
+        }
+        button.disabled = true;
+        button.textContent = text || "处理中...";
+      } else {
+        button.disabled = false;
+        button.textContent = button.dataset.label || button.textContent;
+        busyButtons.delete(button);
+      }
+    }
+
+    async function withBusy(button, text, task) {
+      setBusy(button, true, text);
+      try {
+        return await task();
+      } finally {
+        setBusy(button, false);
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function safeUrl(value) {
+      try {
+        const url = new URL(value);
+        return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+      } catch {
+        return "";
+      }
+    }
+
+    async function request(path, options = {}) {
+      const response = await fetch(path, {
+        headers: { "Content-Type": "application/json; charset=utf-8", ...(options.headers || {}) },
+        ...options
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      return response.json();
+    }
+
+    async function loadProfile() {
+      const profile = await request(`/api/profile?userId=${encodeURIComponent(userId())}`);
+      renderTerms(profile.interestTerms || []);
+      return profile;
+    }
+
+    async function loadPolicy() {
+      const policy = await request(`/api/recommendations/refresh-policy?userId=${encodeURIComponent(userId())}`);
+      const expiresAt = policy.expiresAt ? new Date(policy.expiresAt).toLocaleString() : "尚未生成";
+      $("refreshHours").textContent = `${policy.refreshHours} 小时`;
+      $("activityCount").textContent = `${policy.recentActivityCount} 条`;
+      $("policy").textContent = `推荐到期：${expiresAt}`;
+      return policy;
+    }
+
+    async function loadRecommendations(force = false) {
+      setStatus(force ? "正在强制重新生成推荐..." : "正在检查推荐是否过期...");
+      const path = force ? "/api/recommendations/refresh" : "/api/recommendations/today";
+      const method = force ? "POST" : "GET";
+      const data = await request(`${path}?userId=${encodeURIComponent(userId())}`, { method });
+      renderRecommendations(data);
+      await Promise.all([loadProfile(), loadPolicy()]);
+      setStatus(force ? "推荐已重新生成。" : "已完成自动检查，过期时后端会自动刷新。", "ok");
+    }
+
+    async function searchAndRecommend() {
+      const keyword = $("keyword").value.trim();
+      if (!keyword) {
+        setStatus("请输入关键词后再搜索。", "warn");
+        $("keyword").focus();
+        return;
+      }
+      setStatus(`正在根据“${keyword}”更新画像并生成推荐...`);
+      const data = await request("/api/recommendations/search", {
+        method: "POST",
+        body: JSON.stringify({
+          userId: userId(),
+          keyword,
+          platform: $("keywordPlatform").value,
+          refresh: true
+        })
+      });
+      renderTerms(data.profile.interestTerms || []);
+      renderRecommendations(data.recommendations || []);
+      await loadPolicy();
+      setStatus(`已根据“${keyword}”生成推荐。`, "ok");
+    }
+
+    async function submitVisit() {
+      if (!$("visitTitle").value.trim() || !$("visitUrl").value.trim()) {
+        setStatus("请填写访问标题和链接。", "warn");
+        return;
+      }
+      const tags = $("visitTags").value.split(/[,，;；|]/).map((item) => item.trim()).filter(Boolean);
+      await request("/api/visits", {
+        method: "POST",
+        body: JSON.stringify({
+          userId: userId(),
+          title: $("visitTitle").value.trim(),
+          url: $("visitUrl").value.trim(),
+          platform: $("visitPlatform").value.trim(),
+          tags
+        })
+      });
+      $("visitTitle").value = "";
+      $("visitUrl").value = "";
+      setStatus("访问记录已提交，正在刷新推荐...", "ok");
+      await loadRecommendations(true);
+    }
+
+    async function submitActivity() {
+      const text = $("activityText").value.trim();
+      if (!text) {
+        setStatus("请填写行为内容。", "warn");
+        $("activityText").focus();
+        return;
+      }
+      await request("/api/activities", {
+        method: "POST",
+        body: JSON.stringify({
+          userId: userId(),
+          type: $("activityType").value,
+          platform: $("activityPlatform").value.trim(),
+          title: text.slice(0, 60),
+          text,
+          tags: text.split(/\s+/).filter(Boolean).slice(0, 6)
+        })
+      });
+      $("activityText").value = "";
+      setStatus("行为已提交，正在刷新推荐...", "ok");
+      await loadRecommendations(true);
+    }
+
+    async function feedback(id, value) {
+      await request(`/api/recommendations/${id}/feedback`, {
+        method: "POST",
+        body: JSON.stringify({ feedback: value })
+      });
+      setStatus("反馈已记录，会影响后续画像调优。", "ok");
+      await loadRecommendations(false);
+    }
+
+    function renderTerms(terms) {
+      $("terms").innerHTML = terms.length
+        ? terms.map((term) => `<span class="term">${escapeHtml(term.term)} · ${Number(term.weight).toFixed(1)}</span>`).join("")
+        : `<div class="empty">暂无关键词，先提交搜索或浏览行为。</div>`;
+    }
+
+    function renderRecommendations(items) {
+      if (!items.length) {
+        $("recommendations").innerHTML = `<div class="empty">暂无推荐，提交行为或点击强制重算试试。</div>`;
+        return;
+      }
+      $("recommendations").innerHTML = items.map((item) => {
+        const content = item.content || {};
+        const href = safeUrl(content.url);
+        const title = escapeHtml(content.title || "未命名内容");
+        const link = href ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${title}</a>` : title;
+        return `
+          <article class="item">
+            <h3>${link}</h3>
+            <div class="meta">
+              <span class="pill">${escapeHtml(content.platform || "unknown")}</span>
+              <span class="pill">分数 ${Number(item.score || 0).toFixed(2)}</span>
+              <span>${escapeHtml(item.reason || "")}</span>
+            </div>
+            <p class="subtle">${escapeHtml(content.summary || "暂无摘要")}</p>
+            <div class="row" style="margin-top:12px">
+              <button class="ghost" type="button" onclick="feedback(${item.id}, 'LIKE').catch(showError)">喜欢</button>
+              <button class="ghost" type="button" onclick="feedback(${item.id}, 'DISLIKE').catch(showError)">不感兴趣</button>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function showError(error) {
+      setStatus(friendlyError(error), "error");
+      console.error(error);
+    }
+
+    $("loadBtn").addEventListener("click", () => withBusy($("loadBtn"), "检查中...", () => loadRecommendations(false)).catch(showError));
+    $("refreshBtn").addEventListener("click", () => withBusy($("refreshBtn"), "刷新中...", () => loadRecommendations(false)).catch(showError));
+    $("forceBtn").addEventListener("click", () => withBusy($("forceBtn"), "重算中...", () => loadRecommendations(true)).catch(showError));
+    $("searchBtn").addEventListener("click", () => withBusy($("searchBtn"), "生成中...", searchAndRecommend).catch(showError));
+    $("visitBtn").addEventListener("click", () => withBusy($("visitBtn"), "提交中...", submitVisit).catch(showError));
+    $("activityBtn").addEventListener("click", () => withBusy($("activityBtn"), "提交中...", submitActivity).catch(showError));
+    $("userId").addEventListener("change", () => loadRecommendations(false).catch(showError));
+
+    loadRecommendations(false).catch(showError);
+  </script>
+</body>
+</html>

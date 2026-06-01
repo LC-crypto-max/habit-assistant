@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "api-design-assistant": {
+      "source": "ArabelaTso/Skills-4-SE",
+      "sourceType": "github",
+      "skillPath": "skills/api-design-assistant/SKILL.md",
+      "computedHash": "02ac49f743670d8fa3630ab3d297c6514b8fe9a741bd84960997369f80f6c31f"
+    },
+    "api-documentation-generator": {
+      "source": "ArabelaTso/Skills-4-SE",
+      "sourceType": "github",
+      "skillPath": "skills/api-documentation-generator/SKILL.md",
+      "computedHash": "86e3bd248e0cb82471f8dd81303e85ba8344592863d13046dd422a766c1875d0"
+    },
+    "code-reviewer": {
+      "source": "Shubhamsaboo/awesome-llm-apps",
+      "sourceType": "github",
+      "skillPath": "awesome_agent_skills/code-reviewer/SKILL.md",
+      "computedHash": "20cc3ad7431ddaa86a8560b65afde7ba016d14c37ddafa4eeb441e7fec77be1b"
+    },
+    "optimize-skill": {
+      "source": "Datus-ai/Datus-agent",
+      "sourceType": "github",
+      "skillPath": "datus/resources/skills/optimize-skill/SKILL.md",
+      "computedHash": "88b42bfa55d828ac009094d84458447028ad25146e8f357cab4d12bab28073e1"
+    }
+  }
+}

@@ -1,0 +1,78 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  jackson:
+    default-property-inclusion: non_null
+  datasource:
+    url: jdbc:h2:file:./data/assistantdb;FILE_LOCK=NO
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+logging:
+  charset:
+    console: UTF-8
+    file: UTF-8
+
+assistant:
+  user-id: me
+  daily-cron: "0 0 8 * * ?"
+  keywords:
+    - AI
+    - Java
+    - 编程
+    - 科技
+  history-import:
+    enabled: false
+    cron: "0 30 * * * ?"
+    directory: ./imports/history
+    archive-directory: ./imports/history/archive
+    failed-directory: ./imports/history/failed
+    file-pattern: "*.csv"
+  collectors:
+    rss:
+      enabled: false
+      feeds:
+        # 示例：配置你自己合法订阅的 RSS/Atom feed。
+        # - platform: bilibili-rss
+        #   url: https://example.com/bilibili/rss.xml
+        #   tags: [B站, 视频]
+    json-api:
+      enabled: false
+      sources:
+        # 示例：适配返回 items/title/link/snippet 的官方或自建 JSON API。
+        # - platform: web-search
+        #   endpoint-template: "https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CX}&q={query}"
+        #   results-pointer: /items
+        #   title-pointer: /title
+        #   url-pointer: /link
+        #   summary-pointer: /snippet
+        #   tags: [搜索]
+    x:
+      enabled: false
+      bearer-token: ${X_BEARER_TOKEN:}
+      max-results: 10
+  feishu:
+    webhook-url: ${FEISHU_WEBHOOK_URL:}
+  recommendation-refresh:
+    activity-window-hours: 24
+    medium-activity-threshold: 20
+    high-activity-threshold: 80
+    low-activity-hours: 12
+    medium-activity-hours: 6
+    high-activity-hours: 3

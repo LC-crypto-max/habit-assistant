@@ -1,0 +1,46 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:habit_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+assistant:
+  user-id: test-user
+  daily-cron: "-"
+  keywords:
+    - AI
+    - Java
+    - 测试
+  history-import:
+    enabled: false
+    cron: "-"
+    directory: ./target/test-imports/history
+    archive-directory: ./target/test-imports/history/archive
+    failed-directory: ./target/test-imports/history/failed
+    file-pattern: "*.csv"
+  collectors:
+    rss:
+      enabled: false
+      feeds: []
+    json-api:
+      enabled: false
+      sources: []
+    x:
+      enabled: false
+      bearer-token:
+      max-results: 10
+  feishu:
+    webhook-url:
+  recommendation-refresh:
+    activity-window-hours: 24
+    medium-activity-threshold: 2
+    high-activity-threshold: 5
+    low-activity-hours: 12
+    medium-activity-hours: 6
+    high-activity-hours: 3

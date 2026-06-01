@@ -1,0 +1,43 @@
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs
+logs/
+*.log
+
+# Local database and runtime data
+data/
+imports/history/archive/
+imports/history/failed/
+*.db
+*.mv.db
+*.trace.db
+*.lock.db
+
+# Environment and sensitive configuration
+.env
+.env.*
+!.env.example
+application-prod.yml
+application-prod.properties
+src/main/resources/application-prod.yml
+src/main/resources/application-prod.properties
+
+# Frontend build outputs
+node_modules/
+dist/
+build/
+.cache/
+
+# OS temporary files
+.DS_Store
+Thumbs.db
