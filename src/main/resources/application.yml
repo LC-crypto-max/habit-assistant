@@ -29,6 +29,13 @@ logging:
     console: UTF-8
     file: UTF-8
 
+management:
+  health:
+    rabbit:
+      enabled: false
+    redis:
+      enabled: false
+
 assistant:
   user-id: me
   daily-cron: "0 0 8 * * ?"
@@ -76,3 +83,13 @@ assistant:
     low-activity-hours: 12
     medium-activity-hours: 6
     high-activity-hours: 3
+  behavior:
+    rabbitmq:
+      enabled: false
+      exchange: habit.behavior.events
+      routing-key: behavior.events.created
+  profile:
+    cache:
+      redis:
+        enabled: false
+        ttl-hours: 24

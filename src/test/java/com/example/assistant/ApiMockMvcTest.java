@@ -208,6 +208,112 @@ class ApiMockMvcTest {
                 .andExpect(jsonPath("$.type").value("WATCH"))
                 .andExpect(jsonPath("$.platform").value("bilibili-app"));
 
+        mockMvc.perform(post("/api/datasources/events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "alice",
+                                      "platform": "xiaohongshu",
+                                      "type": "FAVORITE",
+                                      "title": "小红书AI效率笔记收藏",
+                                      "url": "https://www.xiaohongshu.com/search_result?keyword=AI%20效率%20笔记",
+                                      "summary": "用户收藏的小红书效率笔记",
+                                      "tags": ["小红书", "AI", "效率"]
+                                    },
+                                    {
+                                      "userId": "alice",
+                                      "platform": "bilibili",
+                                      "type": "WATCH",
+                                      "title": "B站 Spring Boot 推荐系统视频",
+                                      "url": "https://www.bilibili.com/video/BV1demo",
+                                      "summary": "观看了推荐系统实战视频",
+                                      "tags": ["B站", "Java", "推荐系统"]
+                                    },
+                                    {
+                                      "userId": "alice",
+                                      "platform": "youtube",
+                                      "type": "WATCH",
+                                      "title": "YouTube AI Agent Tutorial",
+                                      "url": "https://www.youtube.com/watch?v=demo",
+                                      "summary": "AI Agent 教程字幕摘要",
+                                      "tags": ["YouTube", "AI", "Agent"]
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(3))
+                .andExpect(jsonPath("$.activities", hasSize(3)))
+                .andExpect(jsonPath("$.activities[0].platform").value("xiaohongshu"))
+                .andExpect(jsonPath("$.activities[1].platform").value("bilibili"))
+                .andExpect(jsonPath("$.activities[2].platform").value("youtube"));
+
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "alice",
+                                      "platform": "xiaohongshu",
+                                      "source": "agent-reach",
+                                      "externalId": "xhs-note-001",
+                                      "type": "FAVORITE",
+                                      "title": "Xiaohongshu AI workflow note",
+                                      "url": "https://www.xiaohongshu.com/explore/demo-note",
+                                      "summary": "Collected note from a compliant local export file.",
+                                      "tags": ["xiaohongshu", "ai", "workflow"]
+                                    },
+                                    {
+                                      "userId": "alice",
+                                      "platform": "wechat",
+                                      "source": "wechat-mini",
+                                      "externalId": "wechat-link-001",
+                                      "type": "VISIT",
+                                      "title": "WeChat reading list",
+                                      "url": "https://mp.weixin.qq.com/s/demo",
+                                      "summary": "Uploaded from mini program client.",
+                                      "tags": ["wechat", "reading"]
+                                    },
+                                    {
+                                      "userId": "alice",
+                                      "platform": "bilibili",
+                                      "source": "agent-reach",
+                                      "externalId": "BV1demo",
+                                      "type": "WATCH",
+                                      "title": "Bilibili Spring Boot recommendation video",
+                                      "url": "https://www.bilibili.com/video/BV1demo",
+                                      "summary": "Watched recommendation-system practice video.",
+                                      "tags": ["bilibili", "java", "recommendation"]
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(3))
+                .andExpect(jsonPath("$.skipped").value(0))
+                .andExpect(jsonPath("$.messagesPublished").value(0))
+                .andExpect(jsonPath("$.activities", hasSize(3)))
+                .andExpect(jsonPath("$.activities[0].platform").value("xiaohongshu"))
+                .andExpect(jsonPath("$.activities[1].platform").value("wechat"))
+                .andExpect(jsonPath("$.activities[2].platform").value("bilibili"));
+
+        mockMvc.perform(get("/api/profile/daily")
+                        .param("userId", "alice")
+                        .param("refresh", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("alice"))
+                .andExpect(jsonPath("$.summary").exists())
+                .andExpect(jsonPath("$.last7Days.days").value(7))
+                .andExpect(jsonPath("$.last7Days.activityCount").value(greaterThanOrEqualTo(3)))
+                .andExpect(jsonPath("$.last30Days.days").value(30))
+                .andExpect(jsonPath("$.last30Days.activityCount").value(greaterThanOrEqualTo(3)))
+                .andExpect(jsonPath("$.topTags", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.recentActivities", hasSize(greaterThanOrEqualTo(3))))
+                .andExpect(jsonPath("$.cached").value(false));
+
         mockMvc.perform(get("/api/admin/migration/activities/export"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(greaterThanOrEqualTo(1)))

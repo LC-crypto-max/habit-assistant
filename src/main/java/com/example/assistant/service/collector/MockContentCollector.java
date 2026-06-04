@@ -56,7 +56,25 @@ public class MockContentCollector implements PlatformCollector {
                     "搜索结果示例",
                     "用搜索词、观看内容和反馈构建用户画像，是个人推荐系统最容易落地的第一步。",
                     LocalDateTime.now().minusDays(2).minusHours(4),
-                    List.of("推荐系统", "个人画像", "搜索词", "算法")));
+                    List.of("推荐系统", "个人画像", "搜索词", "算法")),
+            new CollectedContent("xiaohongshu", "mock-xhs-travel", "小红书城市周末路线：咖啡店、展览和Citywalk",
+                    "https://www.xiaohongshu.com/search_result?keyword=Citywalk%20咖啡%20展览",
+                    "小红书示例源",
+                    "适合把用户在小红书收藏、搜索和浏览过的生活方式内容沉淀为兴趣画像。",
+                    LocalDateTime.now().minusHours(6),
+                    List.of("小红书", "citywalk", "咖啡", "展览", "生活方式")),
+            new CollectedContent("xiaohongshu", "mock-xhs-ai-life", "小红书AI效率笔记：用自动化整理每日灵感",
+                    "https://www.xiaohongshu.com/search_result?keyword=AI%20效率%20笔记",
+                    "小红书示例源",
+                    "把小红书上的效率工具、读书笔记和灵感清单整理成可持续追踪的个人内容偏好。",
+                    LocalDateTime.now().minusHours(9),
+                    List.of("小红书", "ai", "效率", "笔记", "知识管理")),
+            new CollectedContent("xiaohongshu", "mock-xhs-food", "小红书家常菜收藏夹：低脂晚餐和一人食",
+                    "https://www.xiaohongshu.com/search_result?keyword=低脂晚餐%20一人食",
+                    "小红书示例源",
+                    "通过用户主动提交的小红书收藏和搜索词，识别美食、健身、生活方式等细分兴趣。",
+                    LocalDateTime.now().minusDays(1),
+                    List.of("小红书", "美食", "低脂晚餐", "一人食", "生活")));
 
     @Override
     public String platform() {

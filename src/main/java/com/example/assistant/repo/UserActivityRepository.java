@@ -12,6 +12,8 @@ public interface UserActivityRepository extends JpaRepository<UserActivity, Long
 
     List<UserActivity> findTop100ByUserIdOrderByOccurredAtDesc(String userId);
 
+    List<UserActivity> findByUserIdAndOccurredAtAfterOrderByOccurredAtDesc(String userId, LocalDateTime occurredAt);
+
     long countByUserId(String userId);
 
     long countByUserIdAndOccurredAtAfter(String userId, LocalDateTime occurredAt);

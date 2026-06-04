@@ -1,5 +1,6 @@
 package com.example.assistant.controller;
 
+import com.example.assistant.dto.DailyProfileResponse;
 import com.example.assistant.dto.ProfileResponse;
 import com.example.assistant.dto.UserSummaryResponse;
 import com.example.assistant.service.ProfileService;
@@ -22,6 +23,12 @@ public class ProfileController {
     @GetMapping
     public ProfileResponse currentProfile(@RequestParam(required = false) String userId) {
         return profileService.currentProfile(userId);
+    }
+
+    @GetMapping("/daily")
+    public DailyProfileResponse dailyProfile(@RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean refresh) {
+        return profileService.dailyProfile(userId, refresh);
     }
 
     @GetMapping("/users")

@@ -43,8 +43,11 @@ habit-assistant-java
 - 动态刷新：按近 24 小时行为量自动选择 3/6/12 小时推荐有效期。
 - 前端后台：自动刷新推荐、关键词搜索推荐、推荐反馈、画像关键词展示。
 - 本地采集脚本：可选导入 Chrome/Edge 历史，检测本机应用使用情况。
+- 小红书数据源：支持用户主动提交小红书链接、CSV 导入、小程序/飞书入口扩展。
 - 小程序/飞书扩展：提供微信小程序风格 API 和飞书机器人推送入口。
 - 数据迁移：支持 H2 行为数据和完整推荐数据迁移到 MySQL。
+
+完整架构设计见 [docs/architecture-design.md](docs/architecture-design.md)。
 
 ## 本地启动
 
@@ -160,6 +163,8 @@ Invoke-RestMethod `
 | `GET` | `/api/profile?userId=alice` | 查询用户画像 |
 | `GET` | `/api/profile/users` | 查询用户列表 |
 | `POST` | `/api/activities` | 提交通用行为 |
+| `POST` | `/api/datasources/events` | 提交单条平台采集事件 |
+| `POST` | `/api/datasources/events/batch` | 批量提交小红书/B站/YouTube 等采集事件 |
 | `POST` | `/api/search-terms` | 提交搜索词 |
 | `POST` | `/api/visits` | 提交访问记录 |
 | `POST` | `/api/visits/import?userId=alice` | 上传 CSV 浏览记录 |
@@ -186,6 +191,78 @@ powershell -ExecutionPolicy Bypass -File .\scripts\collect-app-usage.ps1 -UserId
 ```
 
 本项目不会静默读取本机数据，采集脚本需要用户主动执行。
+
+### 小红书数据接入
+
+小红书个人访问、收藏、推荐流通常没有通用个人开放 API。项目推荐采用合规路线：用户主动提交链接或 CSV，小程序/飞书机器人做提交入口，后续如拿到官方或授权数据源再实现专用 Collector。
+
+本地导入示例：
+
+```powershell
+curl.exe -X POST "http://localhost:8080/api/visits/import?userId=alice" `
+  -F "file=@sample-xiaohongshu-visits.csv"
+```
+
+生成小红书相关推荐：
+
+```powershell
+$body = @{
+  userId = "alice"
+  keyword = "小红书 AI 效率 笔记"
+  platform = "xiaohongshu"
+  refresh = $true
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8080/api/recommendations/search" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+```
+
+详细方案见 [docs/xiaohongshu-integration-plan.md](docs/xiaohongshu-integration-plan.md)。
+
+### 多平台采集事件接口
+
+小红书、B站、YouTube、微信等本地客户端或机器人采集结果，可以统一提交到：
+
+```powershell
+$body = @{
+  events = @(
+    @{
+      userId = "alice"
+      platform = "xiaohongshu"
+      type = "FAVORITE"
+      title = "小红书AI效率笔记收藏"
+      url = "https://www.xiaohongshu.com/search_result?keyword=AI%20效率%20笔记"
+      summary = "用户收藏的小红书效率笔记"
+      tags = @("小红书", "AI", "效率")
+    },
+    @{
+      userId = "alice"
+      platform = "bilibili"
+      type = "WATCH"
+      title = "B站 Spring Boot 推荐系统视频"
+      url = "https://www.bilibili.com/video/BV1demo"
+      tags = @("B站", "Java", "推荐系统")
+    },
+    @{
+      userId = "alice"
+      platform = "youtube"
+      type = "WATCH"
+      title = "YouTube AI Agent Tutorial"
+      url = "https://www.youtube.com/watch?v=demo"
+      tags = @("YouTube", "AI", "Agent")
+    }
+  )
+} | ConvertTo-Json -Depth 8
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8080/api/datasources/events/batch" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+```
 
 ## 测试与验证
 
@@ -284,3 +361,144 @@ docker compose up -d mysql
 - 引入消息队列异步处理采集、画像更新和推荐生成。
 - 内容量扩大后引入 Elasticsearch/OpenSearch 做候选召回。
 - 引入向量召回或大模型重排，进一步提升推荐质量。
+## Profile 每日画像接口
+
+新增 `GET /api/profile/daily?userId=alice`，用于给 HTML 前端、微信小程序或飞书机器人渲染每日用户画像。
+
+能力：
+
+- 统计最近 7 天和 30 天行为数量。
+- 聚合行为类型和平台分布。
+- 从标题、正文、平台和标签中抽取兴趣标签并计算权重。
+- 输出自然语言摘要，当前为规则生成 Mock 摘要，后续可替换为大模型摘要。
+- 支持 Redis 缓存每日画像，默认关闭，本地无需 Redis。
+
+调用示例：
+
+```powershell
+Invoke-RestMethod "http://localhost:8080/api/profile/daily?userId=alice&refresh=true"
+```
+
+返回结构示例：
+
+```json
+{
+  "userId": "alice",
+  "profileDate": "2026-06-04",
+  "generatedAt": "2026-06-04T10:00:00",
+  "summary": "用户 alice 最近 7 天产生 12 条行为，30 天累计 40 条。当前主要兴趣集中在 AI、Java、推荐系统。",
+  "last7Days": {
+    "days": 7,
+    "activityCount": 12,
+    "typeCounts": {"WATCH": 6, "SEARCH": 4, "FAVORITE": 2},
+    "platformCounts": {"bilibili": 5, "xiaohongshu": 4, "wechat": 3},
+    "tags": []
+  },
+  "last30Days": {
+    "days": 30,
+    "activityCount": 40,
+    "typeCounts": {},
+    "platformCounts": {},
+    "tags": []
+  },
+  "topTags": [],
+  "recentActivities": [],
+  "cached": false
+}
+```
+
+启用 Redis 每日画像缓存：
+
+```yaml
+assistant:
+  profile:
+    cache:
+      redis:
+        enabled: true
+        ttl-hours: 24
+
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+```
+
+## Behavior 事件批量上传接口
+
+新增统一行为入口 `POST /api/v1/behavior-events/batch`，用于接收小红书、微信、B站等本地客户端、微信小程序、飞书机器人或 Agent Reach 采集器输出的数据。
+
+请求示例：
+
+```powershell
+$body = @{
+  events = @(
+    @{
+      userId = "alice"
+      platform = "xiaohongshu"
+      source = "agent-reach"
+      externalId = "xhs-note-001"
+      type = "FAVORITE"
+      title = "小红书 AI 工作流笔记"
+      url = "https://www.xiaohongshu.com/explore/demo-note"
+      summary = "用户收藏的小红书效率笔记"
+      tags = @("小红书", "AI", "效率")
+    },
+    @{
+      userId = "alice"
+      platform = "wechat"
+      source = "wechat-mini"
+      externalId = "wechat-link-001"
+      type = "VISIT"
+      title = "微信公众号阅读清单"
+      url = "https://mp.weixin.qq.com/s/demo"
+      tags = @("微信", "阅读")
+    },
+    @{
+      userId = "alice"
+      platform = "bilibili"
+      source = "agent-reach"
+      externalId = "BV1demo"
+      type = "WATCH"
+      title = "B站 Spring Boot 推荐系统视频"
+      url = "https://www.bilibili.com/video/BV1demo"
+      tags = @("B站", "Java", "推荐系统")
+    }
+  )
+} | ConvertTo-Json -Depth 8
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8080/api/v1/behavior-events/batch" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+```
+
+返回字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `imported` | 成功写入行为表的事件数量 |
+| `skipped` | 空事件跳过数量 |
+| `messagesPublished` | 成功发送到 RabbitMQ 的消息数量 |
+| `activities` | 写库后的行为记录 |
+
+默认情况下 RabbitMQ 发送关闭，便于本地直接运行。线上启用时增加配置：
+
+```yaml
+assistant:
+  behavior:
+    rabbitmq:
+      enabled: true
+      exchange: habit.behavior.events
+      routing-key: behavior.events.created
+
+spring:
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+```
+
+使用 MySQL profile 运行时，该接口写入 MySQL；测试 profile 使用 H2 memory，不依赖真实 MySQL 或 RabbitMQ。

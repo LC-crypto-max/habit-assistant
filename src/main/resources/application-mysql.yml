@@ -12,8 +12,20 @@ spring:
       hibernate:
         format_sql: false
 
+management:
+  health:
+    rabbit:
+      enabled: ${RABBIT_HEALTH_ENABLED:false}
+    redis:
+      enabled: ${REDIS_HEALTH_ENABLED:false}
+
 assistant:
   history-import:
     directory: ./imports/history
     archive-directory: ./imports/history/archive
     failed-directory: ./imports/history/failed
+  profile:
+    cache:
+      redis:
+        enabled: ${PROFILE_REDIS_ENABLED:false}
+        ttl-hours: ${PROFILE_REDIS_TTL_HOURS:24}
