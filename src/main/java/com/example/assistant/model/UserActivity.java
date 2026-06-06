@@ -27,10 +27,13 @@ public class UserActivity {
 
     private String platform;
 
+    @Column(length = 512)
     private String title;
 
+    @Column(length = 1024)
     private String url;
 
+    @Column(length = 2000)
     private String text;
 
     private LocalDateTime occurredAt;

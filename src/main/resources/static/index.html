@@ -6,22 +6,26 @@
   <title>个人兴趣助手</title>
   <style>
     :root {
-      --bg: #f7f9fc;
+      --bg: #f6f8fb;
       --surface: #ffffff;
-      --surface-soft: #f1f5f9;
-      --line: #e2e8f0;
-      --text: #182230;
+      --surface-soft: #f2f5f9;
+      --line: #d9e2ec;
+      --text: #172033;
       --muted: #667085;
       --primary: #2563eb;
-      --primary-hover: #1d4ed8;
-      --success: #047857;
-      --warning: #b45309;
+      --primary-strong: #1d4ed8;
+      --teal: #0f766e;
+      --amber: #b45309;
       --danger: #b42318;
+      --ok: #047857;
       --radius: 8px;
-      --space: 16px;
       font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
       color: var(--text);
       background: var(--bg);
+    }
+
+    html {
+      scroll-behavior: smooth;
     }
 
     * {
@@ -32,6 +36,29 @@
       margin: 0;
       min-height: 100vh;
       background: var(--bg);
+      overflow-x: hidden;
+      -webkit-tap-highlight-color: rgba(37, 99, 235, .16);
+    }
+
+    .skip-link {
+      position: absolute;
+      left: 16px;
+      top: 12px;
+      z-index: 10;
+      transform: translateY(-140%);
+      border-radius: var(--radius);
+      background: #111827;
+      color: #fff;
+      padding: 9px 12px;
+      text-decoration: none;
+      font-weight: 700;
+      transition: transform .15s ease;
+    }
+
+    .skip-link:focus-visible {
+      transform: translateY(0);
+      outline: 3px solid #93c5fd;
+      outline-offset: 2px;
     }
 
     .topbar {
@@ -40,20 +67,20 @@
     }
 
     .topbar-inner {
-      width: min(1200px, calc(100% - 32px));
+      width: min(1240px, calc(100% - 32px));
       margin: 0 auto;
-      padding: 22px 0;
+      padding: 20px 0;
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: var(--space);
+      gap: 16px;
       align-items: center;
     }
 
     .eyebrow {
-      margin: 0 0 6px;
-      color: var(--primary);
+      margin: 0 0 5px;
+      color: var(--teal);
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 750;
     }
 
     h1, h2, h3, p {
@@ -61,22 +88,26 @@
     }
 
     h1 {
-      margin-bottom: 8px;
+      margin-bottom: 7px;
       font-size: 26px;
       line-height: 1.25;
       letter-spacing: 0;
+      text-wrap: balance;
     }
 
     h2 {
-      margin-bottom: 14px;
+      margin-bottom: 12px;
       font-size: 17px;
       line-height: 1.35;
+      letter-spacing: 0;
+      text-wrap: balance;
     }
 
     h3 {
       margin-bottom: 8px;
       font-size: 15px;
       line-height: 1.4;
+      letter-spacing: 0;
     }
 
     .subtle {
@@ -87,29 +118,30 @@
     }
 
     main {
-      width: min(1200px, calc(100% - 32px));
+      width: min(1240px, calc(100% - 32px));
       margin: 18px auto 36px;
       display: grid;
       grid-template-columns: 320px minmax(0, 1fr);
-      gap: var(--space);
+      gap: 16px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+      align-content: start;
     }
 
     .card {
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: var(--space);
-    }
-
-    .stack {
-      display: grid;
-      gap: var(--space);
+      padding: 16px;
     }
 
     .grid-2 {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--space);
+      gap: 14px;
     }
 
     .row {
@@ -117,6 +149,47 @@
       gap: 10px;
       align-items: center;
       flex-wrap: wrap;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .section-title {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .step-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      background: #e0f2fe;
+      color: #0369a1;
+      font-size: 12px;
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--line);
+      margin: 2px 0;
+    }
+
+    .compact-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
     }
 
     .field {
@@ -128,7 +201,7 @@
     label {
       color: #344054;
       font-size: 13px;
-      font-weight: 650;
+      font-weight: 700;
     }
 
     .hint {
@@ -139,24 +212,32 @@
 
     input, select, textarea {
       width: 100%;
+      min-width: 0;
       border: 1px solid var(--line);
       border-radius: 7px;
       background: #fff;
       color: var(--text);
       padding: 10px 11px;
       font: inherit;
-      outline: none;
       transition: border-color .15s ease, box-shadow .15s ease;
     }
 
-    input:focus, select:focus, textarea:focus {
+    input:focus-visible, select:focus-visible, textarea:focus-visible {
       border-color: #93c5fd;
       box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
+      outline: 2px solid transparent;
     }
 
     textarea {
-      min-height: 92px;
+      min-height: 108px;
       resize: vertical;
+    }
+
+    textarea.mono {
+      min-height: 210px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.5;
     }
 
     button {
@@ -165,13 +246,20 @@
       padding: 10px 14px;
       background: var(--primary);
       color: #fff;
-      font-weight: 700;
+      font-weight: 750;
       cursor: pointer;
       transition: background .15s ease, opacity .15s ease;
+      white-space: nowrap;
+      touch-action: manipulation;
     }
 
     button:hover {
-      background: var(--primary-hover);
+      background: var(--primary-strong);
+    }
+
+    button:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, .35);
+      outline-offset: 2px;
     }
 
     button:disabled {
@@ -209,12 +297,12 @@
 
     .status.ok {
       background: #ecfdf3;
-      color: var(--success);
+      color: var(--ok);
     }
 
     .status.warn {
       background: #fff7ed;
-      color: var(--warning);
+      color: var(--amber);
     }
 
     .status.error {
@@ -232,6 +320,7 @@
 
     .metric strong {
       font-size: 18px;
+      font-variant-numeric: tabular-nums;
     }
 
     .metric span {
@@ -239,19 +328,34 @@
       font-size: 12px;
     }
 
-    .terms {
+    .terms, .platforms {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
     }
 
-    .term {
+    .term, .platform-chip {
       border-radius: 999px;
       background: #eff6ff;
       color: #1d4ed8;
       padding: 6px 10px;
       font-size: 12px;
-      font-weight: 650;
+      font-weight: 700;
+    }
+
+    .platform-chip.xhs {
+      background: #fff1f2;
+      color: #be123c;
+    }
+
+    .platform-chip.bili {
+      background: #e0f2fe;
+      color: #0369a1;
+    }
+
+    .platform-chip.youtube {
+      background: #fee2e2;
+      color: #b91c1c;
     }
 
     .recommendations {
@@ -264,6 +368,8 @@
       border-radius: var(--radius);
       padding: 14px;
       background: #fff;
+      content-visibility: auto;
+      overflow-wrap: anywhere;
     }
 
     .item a {
@@ -304,7 +410,7 @@
     .code {
       font-family: Consolas, "Courier New", monospace;
       font-size: 12px;
-      background: #0f172a;
+      background: #111827;
       color: #dbeafe;
       padding: 10px;
       border-radius: 7px;
@@ -312,49 +418,87 @@
       white-space: nowrap;
     }
 
-    .toolbar {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
+    .agent-output {
+      max-height: 220px;
+      overflow: auto;
+      white-space: pre-wrap;
     }
 
-    @media (max-width: 920px) {
+    .platform-choice {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .platform-choice button {
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--line);
+      min-height: 48px;
+    }
+
+    .platform-choice button.active {
+      background: #eff6ff;
+      border-color: #93c5fd;
+      color: var(--primary-strong);
+    }
+
+    .insight-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .summary-text {
+      color: #344054;
+      font-size: 14px;
+      line-height: 1.65;
+      margin: 0;
+    }
+
+    @media (max-width: 980px) {
       .topbar-inner, main {
-        width: min(100% - 24px, 760px);
+        width: min(100% - 24px, 780px);
       }
 
-      .topbar-inner, main, .grid-2 {
+      .topbar-inner, main, .grid-2, .compact-grid {
         grid-template-columns: 1fr;
       }
     }
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
   <header class="topbar">
     <div class="topbar-inner">
       <div>
         <p class="eyebrow">Habit Assistant</p>
-        <h1>个人兴趣画像与内容推荐后台</h1>
-        <p class="subtle">收集搜索、浏览、观看和反馈行为，为不同用户生成画像，并自动刷新可点击的推荐链接。</p>
+        <h1>个人兴趣推荐工作台</h1>
+        <p class="subtle">从小红书、YouTube、Bilibili 的授权访问摘要中学习兴趣，展示访问记录、内容摘要和可点击推荐。</p>
       </div>
-      <button id="forceBtn" type="button">强制重算推荐</button>
+      <button id="forceBtn" type="button" title="重新生成当前用户推荐">重算推荐</button>
     </div>
   </header>
 
-  <main>
+  <main id="main-content">
     <aside class="stack">
       <section class="card">
         <h2>当前用户</h2>
         <div class="field">
           <label for="userId">用户 ID</label>
-          <input id="userId" value="me" autocomplete="off" placeholder="例如：alice">
+          <input id="userId" name="userId" value="me" autocomplete="off" spellcheck="false" placeholder="例如：alice…">
           <div class="hint">本地协作阶段通过 userId 区分用户；正式上线建议接入登录态。</div>
         </div>
-        <div class="row">
-          <button id="loadBtn" class="secondary" type="button">检查推荐</button>
+        <button id="loadBtn" class="secondary" type="button">检查推荐</button>
+      </section>
+
+      <section class="card stack">
+        <h2>关注平台</h2>
+        <div class="platform-choice" role="group" aria-label="选择平台">
+          <button type="button" class="active" data-platform-choice="xiaohongshu">小红书</button>
+          <button type="button" data-platform-choice="youtube">YouTube</button>
+          <button type="button" data-platform-choice="bilibili">Bilibili</button>
         </div>
+        <div class="hint">平台用于创建本地 worker 查询任务，也会影响搜索推荐的来源标签。</div>
       </section>
 
       <section class="card stack">
@@ -366,7 +510,7 @@
           <span>近 24 小时行为</span>
           <strong id="activityCount">-- 条</strong>
         </div>
-        <div id="status" class="status" role="status">页面打开后会自动检查推荐是否过期。</div>
+        <div id="status" class="status" role="status" aria-live="polite">页面打开后会自动检查推荐是否过期。</div>
       </section>
 
       <section class="card">
@@ -374,80 +518,53 @@
         <div id="terms" class="terms"></div>
       </section>
 
-      <section class="card stack">
-        <h2>本地采集</h2>
-        <p class="subtle">脚本需要用户手动触发，不会静默读取本机数据。</p>
-        <div class="code">.\scripts\import-browser-history.ps1 -UserId me -Browser edge</div>
-        <div class="code">.\scripts\collect-app-usage.ps1 -UserId me -ProcessName bilibili</div>
-      </section>
+      <input id="codexQueryKind" type="hidden" value="terminal-app-usage">
+      <input id="agentPlatform" type="hidden" value="xiaohongshu">
+      <input id="agentIntent" type="hidden" value="app-usage-summary">
+      <input id="agentQuery" type="hidden" value="读取授权范围内的应用访问概况，只返回平台、标题、公开链接、摘要和兴趣标签。">
+      <input id="keywordPlatform" type="hidden" value="xiaohongshu">
     </aside>
 
     <div class="stack">
       <section class="card stack">
-        <div>
-          <h2>搜索关键词并生成推荐</h2>
-          <p class="subtle">输入你当前感兴趣的关键词，系统会记录搜索行为，并立即刷新推荐。</p>
+        <div class="section-title">
+          <span class="step-badge">1</span>
+          <h2 style="margin:0">调用本地应用使用情况</h2>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="agentUrl">可选：公开视频或笔记链接</label>
+            <input id="agentUrl" name="agentUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="粘贴小红书、YouTube 或 Bilibili 的公开链接…">
+          </div>
+          <div class="field">
+            <label for="keyword">搜索关键词</label>
+            <input id="keyword" name="keyword" autocomplete="off" placeholder="例如：AI 工具、Java Agent、剪辑教程…">
+          </div>
         </div>
         <div class="row">
-          <input id="keyword" style="flex:1 1 260px" placeholder="例如：Java Agent、AI 编程、B站剪辑">
-          <select id="keywordPlatform" style="flex:0 0 160px">
-            <option value="web-search">网页搜索</option>
-            <option value="baidu">百度</option>
-            <option value="bilibili">哔哩哔哩</option>
-            <option value="x">Twitter/X</option>
-          </select>
-          <button id="searchBtn" type="button">搜索并推荐</button>
+          <button id="agentCreateQueryBtn" type="button">创建采集任务</button>
+          <button id="agentStartWorkerBtn" class="secondary" type="button">启动 worker 并授权</button>
+          <button id="searchBtn" class="ghost" type="button">按关键词推荐</button>
         </div>
+        <div class="hint">建议流程：先创建采集任务，再启动 worker。新窗口会展示采集范围，输入 y 后才会回传数据。</div>
+        <div id="agentResult" class="status agent-output" aria-live="polite">等待本地 worker 操作。</div>
       </section>
 
       <section class="grid-2">
-        <div class="card">
-          <h2>提交访问记录</h2>
-          <div class="field">
-            <label for="visitTitle">标题</label>
-            <input id="visitTitle" placeholder="页面标题">
+        <div class="card stack">
+          <div class="section-title">
+            <span class="step-badge">2</span>
+            <h2 style="margin:0">访问了哪些网页</h2>
           </div>
-          <div class="field">
-            <label for="visitUrl">链接</label>
-            <input id="visitUrl" placeholder="https://example.com/article">
-          </div>
-          <div class="grid-2" style="gap:12px">
-            <div class="field">
-              <label for="visitPlatform">平台</label>
-              <input id="visitPlatform" placeholder="browser / bilibili">
-            </div>
-            <div class="field">
-              <label for="visitTags">标签</label>
-              <input id="visitTags" placeholder="用逗号分隔">
-            </div>
-          </div>
-          <button id="visitBtn" type="button">提交访问</button>
+          <div id="visitedPages" class="insight-list"></div>
         </div>
 
-        <div class="card">
-          <h2>提交行为</h2>
-          <div class="grid-2" style="gap:12px">
-            <div class="field">
-              <label for="activityType">类型</label>
-              <select id="activityType">
-                <option value="WATCH">观看</option>
-                <option value="VISIT">访问</option>
-                <option value="SEARCH">搜索</option>
-                <option value="LIKE">喜欢</option>
-                <option value="FAVORITE">收藏</option>
-                <option value="DISLIKE">不感兴趣</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="activityPlatform">平台</label>
-              <input id="activityPlatform" placeholder="bilibili / x / local-app">
-            </div>
+        <div class="card stack">
+          <div class="section-title">
+            <span class="step-badge">3</span>
+            <h2 style="margin:0">访问网页内容</h2>
           </div>
-          <div class="field">
-            <label for="activityText">内容</label>
-            <textarea id="activityText" placeholder="记录你刚刚看的内容、搜索词或想法"></textarea>
-          </div>
-          <button id="activityBtn" type="button">提交行为</button>
+          <div id="contentSummaries" class="insight-list"></div>
         </div>
       </section>
 
@@ -478,6 +595,12 @@
       el.textContent = message;
     }
 
+    function setAgentResult(value, type = "") {
+      const el = $("agentResult");
+      el.className = `status agent-output ${type}`;
+      el.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    }
+
     function friendlyError(error) {
       const message = error && error.message ? error.message : "请求失败，请稍后重试。";
       if (message.includes("Failed to fetch")) {
@@ -486,7 +609,16 @@
       if (message.includes("VALIDATION_ERROR")) {
         return "表单内容不完整，请检查必填项。";
       }
-      return message.length > 160 ? "接口返回异常，请查看后端日志。" : message;
+      if (message.includes("LOCAL_WORKER_DISABLED")) {
+        return "本地 worker 启动接口未开启。请在 application.yml 中设置 assistant.local-worker.enabled=true 后重启后端。";
+      }
+      if (message.includes("LOCAL_WORKER_LOOPBACK_ONLY")) {
+        return "本地 worker 只能从 localhost 页面启动。";
+      }
+      if (message.includes("LOCAL_WORKER_WINDOWS_VISIBLE_TERMINAL_ONLY")) {
+        return "当前自动打开终端功能仅支持 Windows，本机可手动运行 scripts/codex_query_worker.py。";
+      }
+      return message.length > 180 ? "接口返回异常，请查看后端日志。" : message;
     }
 
     function setBusy(button, busy, text) {
@@ -544,6 +676,27 @@
       return response.json();
     }
 
+    const platformLabels = {
+      xiaohongshu: "小红书",
+      youtube: "YouTube",
+      bilibili: "Bilibili"
+    };
+
+    function selectedPlatform() {
+      return $("agentPlatform").value || "xiaohongshu";
+    }
+
+    function selectPlatform(platform) {
+      $("agentPlatform").value = platform;
+      $("keywordPlatform").value = platform;
+      $("agentIntent").value = platform === "youtube" || platform === "bilibili" ? "read-video" : "app-usage-summary";
+      $("agentQuery").value = `读取授权范围内的${platformLabels[platform]}访问概况，只返回访问链接、标题、摘要和兴趣标签。`;
+      document.querySelectorAll("[data-platform-choice]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.platformChoice === platform);
+      });
+      setAgentResult(`已选择 ${platformLabels[platform]}，可以创建采集任务或按关键词生成推荐。`);
+    }
+
     async function loadProfile() {
       const profile = await request(`/api/profile?userId=${encodeURIComponent(userId())}`);
       renderTerms(profile.interestTerms || []);
@@ -559,82 +712,69 @@
       return policy;
     }
 
-    async function loadRecommendations(force = false) {
-      setStatus(force ? "正在强制重新生成推荐..." : "正在检查推荐是否过期...");
+    async function loadRecentActivities() {
+      const activities = await request(`/api/activities/recent?userId=${encodeURIComponent(userId())}`);
+      renderVisitedPages(activities || []);
+      renderContentSummaries(activities || []);
+      return activities;
+    }
+
+    async function loadDashboard(force = false) {
+      setStatus(force ? "正在重新生成推荐..." : "正在同步用户画像、访问记录和推荐...");
       const path = force ? "/api/recommendations/refresh" : "/api/recommendations/today";
       const method = force ? "POST" : "GET";
-      const data = await request(`${path}?userId=${encodeURIComponent(userId())}`, { method });
-      renderRecommendations(data);
-      await Promise.all([loadProfile(), loadPolicy()]);
-      setStatus(force ? "推荐已重新生成。" : "已完成自动检查，过期时后端会自动刷新。", "ok");
+      const recommendations = await request(`${path}?userId=${encodeURIComponent(userId())}`, { method });
+      renderRecommendations(recommendations || []);
+      await Promise.all([loadProfile(), loadPolicy(), loadRecentActivities()]);
+      setStatus(force ? "推荐已重新生成。" : "已同步最新访问记录和推荐。", "ok");
     }
 
     async function searchAndRecommend() {
       const keyword = $("keyword").value.trim();
       if (!keyword) {
-        setStatus("请输入关键词后再搜索。", "warn");
+        setStatus("请输入关键词后再生成推荐。", "warn");
         $("keyword").focus();
         return;
       }
-      setStatus(`正在根据“${keyword}”更新画像并生成推荐...`);
+      setStatus(`正在根据「${keyword}」更新画像并生成推荐...`);
       const data = await request("/api/recommendations/search", {
         method: "POST",
         body: JSON.stringify({
           userId: userId(),
           keyword,
-          platform: $("keywordPlatform").value,
+          platform: selectedPlatform(),
           refresh: true
         })
       });
       renderTerms(data.profile.interestTerms || []);
       renderRecommendations(data.recommendations || []);
-      await loadPolicy();
-      setStatus(`已根据“${keyword}”生成推荐。`, "ok");
+      await Promise.all([loadPolicy(), loadRecentActivities()]);
+      setStatus(`已根据「${keyword}」生成推荐。`, "ok");
     }
 
-    async function submitVisit() {
-      if (!$("visitTitle").value.trim() || !$("visitUrl").value.trim()) {
-        setStatus("请填写访问标题和链接。", "warn");
-        return;
-      }
-      const tags = $("visitTags").value.split(/[,，;；|]/).map((item) => item.trim()).filter(Boolean);
-      await request("/api/visits", {
+    async function createAgentQuery() {
+      const response = await request("/api/agent/queries", {
         method: "POST",
         body: JSON.stringify({
           userId: userId(),
-          title: $("visitTitle").value.trim(),
-          url: $("visitUrl").value.trim(),
-          platform: $("visitPlatform").value.trim(),
-          tags
+          adapter: "agent-reach",
+          platform: selectedPlatform(),
+          intent: $("agentIntent").value,
+          url: $("agentUrl").value.trim(),
+          query: $("agentQuery").value.trim()
         })
       });
-      $("visitTitle").value = "";
-      $("visitUrl").value = "";
-      setStatus("访问记录已提交，正在刷新推荐...", "ok");
-      await loadRecommendations(true);
+      setAgentResult(response, "ok");
+      setStatus("采集任务已创建。现在可以启动 worker，在终端窗口中授权执行。", "ok");
     }
 
-    async function submitActivity() {
-      const text = $("activityText").value.trim();
-      if (!text) {
-        setStatus("请填写行为内容。", "warn");
-        $("activityText").focus();
-        return;
-      }
-      await request("/api/activities", {
+    async function startLocalWorker() {
+      const response = await request("/api/agent/worker/start-once", {
         method: "POST",
-        body: JSON.stringify({
-          userId: userId(),
-          type: $("activityType").value,
-          platform: $("activityPlatform").value.trim(),
-          title: text.slice(0, 60),
-          text,
-          tags: text.split(/\s+/).filter(Boolean).slice(0, 6)
-        })
+        body: JSON.stringify({ dryRun: false, limit: 20 })
       });
-      $("activityText").value = "";
-      setStatus("行为已提交，正在刷新推荐...", "ok");
-      await loadRecommendations(true);
+      setAgentResult(response, "ok");
+      setStatus(response.message || "已请求启动本地 worker，请查看新打开的 PowerShell 窗口。", "ok");
     }
 
     async function feedback(id, value) {
@@ -643,18 +783,49 @@
         body: JSON.stringify({ feedback: value })
       });
       setStatus("反馈已记录，会影响后续画像调优。", "ok");
-      await loadRecommendations(false);
+      await loadDashboard(false);
     }
 
     function renderTerms(terms) {
       $("terms").innerHTML = terms.length
-        ? terms.map((term) => `<span class="term">${escapeHtml(term.term)} · ${Number(term.weight).toFixed(1)}</span>`).join("")
-        : `<div class="empty">暂无关键词，先提交搜索或浏览行为。</div>`;
+        ? terms.slice(0, 12).map((term) => `<span class="term">${escapeHtml(term.term)} · ${Number(term.weight).toFixed(1)}</span>`).join("")
+        : `<div class="empty">暂无关键词，先启动 worker 或输入关键词生成推荐。</div>`;
+    }
+
+    function renderVisitedPages(activities) {
+      const rows = activities.filter((item) => item.url || item.title).slice(0, 8);
+      $("visitedPages").innerHTML = rows.length ? rows.map((item) => {
+        const href = safeUrl(item.url);
+        const title = escapeHtml(item.title || item.url || "未命名访问");
+        const link = href ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${title}</a>` : title;
+        return `
+          <article class="item">
+            <h3>${link}</h3>
+            <div class="meta">
+              <span class="pill">${escapeHtml(item.platform || "unknown")}</span>
+              <span class="pill">${escapeHtml(item.type || "VISIT")}</span>
+            </div>
+          </article>
+        `;
+      }).join("") : `<div class="empty">暂无访问记录。创建采集任务并授权 worker 后会出现在这里。</div>`;
+    }
+
+    function renderContentSummaries(activities) {
+      const rows = activities.filter((item) => item.text || item.title || (item.tags && item.tags.length)).slice(0, 6);
+      $("contentSummaries").innerHTML = rows.length ? rows.map((item) => `
+        <article class="item">
+          <h3>${escapeHtml(item.title || item.platform || "访问摘要")}</h3>
+          <p class="summary-text">${escapeHtml(item.text || "暂无正文摘要，系统会根据标题、链接和标签学习兴趣。")}</p>
+          <div class="terms" style="margin-top:10px">
+            ${(item.tags || []).slice(0, 5).map((tag) => `<span class="term">${escapeHtml(tag)}</span>`).join("")}
+          </div>
+        </article>
+      `).join("") : `<div class="empty">暂无内容摘要。授权采集后会展示标题、摘要和标签。</div>`;
     }
 
     function renderRecommendations(items) {
       if (!items.length) {
-        $("recommendations").innerHTML = `<div class="empty">暂无推荐，提交行为或点击强制重算试试。</div>`;
+        $("recommendations").innerHTML = `<div class="empty">暂无推荐，启动 worker 或按关键词生成推荐试试。</div>`;
         return;
       }
       $("recommendations").innerHTML = items.map((item) => {
@@ -672,8 +843,8 @@
             </div>
             <p class="subtle">${escapeHtml(content.summary || "暂无摘要")}</p>
             <div class="row" style="margin-top:12px">
-              <button class="ghost" type="button" onclick="feedback(${item.id}, 'LIKE').catch(showError)">喜欢</button>
-              <button class="ghost" type="button" onclick="feedback(${item.id}, 'DISLIKE').catch(showError)">不感兴趣</button>
+              <button class="ghost" type="button" data-feedback-id="${item.id}" data-feedback-value="LIKE">喜欢</button>
+              <button class="ghost" type="button" data-feedback-id="${item.id}" data-feedback-value="DISLIKE">不感兴趣</button>
             </div>
           </article>
         `;
@@ -681,19 +852,30 @@
     }
 
     function showError(error) {
-      setStatus(friendlyError(error), "error");
+      const message = friendlyError(error);
+      setStatus(message, "error");
+      setAgentResult(message, "error");
       console.error(error);
     }
 
-    $("loadBtn").addEventListener("click", () => withBusy($("loadBtn"), "检查中...", () => loadRecommendations(false)).catch(showError));
-    $("refreshBtn").addEventListener("click", () => withBusy($("refreshBtn"), "刷新中...", () => loadRecommendations(false)).catch(showError));
-    $("forceBtn").addEventListener("click", () => withBusy($("forceBtn"), "重算中...", () => loadRecommendations(true)).catch(showError));
+    document.querySelectorAll("[data-platform-choice]").forEach((button) => {
+      button.addEventListener("click", () => selectPlatform(button.dataset.platformChoice));
+    });
+    $("loadBtn").addEventListener("click", () => withBusy($("loadBtn"), "检查中...", () => loadDashboard(false)).catch(showError));
+    $("refreshBtn").addEventListener("click", () => withBusy($("refreshBtn"), "刷新中...", () => loadDashboard(false)).catch(showError));
+    $("forceBtn").addEventListener("click", () => withBusy($("forceBtn"), "重算中...", () => loadDashboard(true)).catch(showError));
     $("searchBtn").addEventListener("click", () => withBusy($("searchBtn"), "生成中...", searchAndRecommend).catch(showError));
-    $("visitBtn").addEventListener("click", () => withBusy($("visitBtn"), "提交中...", submitVisit).catch(showError));
-    $("activityBtn").addEventListener("click", () => withBusy($("activityBtn"), "提交中...", submitActivity).catch(showError));
-    $("userId").addEventListener("change", () => loadRecommendations(false).catch(showError));
+    $("agentCreateQueryBtn").addEventListener("click", () => withBusy($("agentCreateQueryBtn"), "创建中...", createAgentQuery).catch(showError));
+    $("agentStartWorkerBtn").addEventListener("click", () => withBusy($("agentStartWorkerBtn"), "启动中...", startLocalWorker).catch(showError));
+    $("userId").addEventListener("change", () => loadDashboard(false).catch(showError));
+    $("recommendations").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-feedback-id]");
+      if (!button) return;
+      feedback(button.dataset.feedbackId, button.dataset.feedbackValue).catch(showError);
+    });
 
-    loadRecommendations(false).catch(showError);
+    selectPlatform("xiaohongshu");
+    loadDashboard(false).catch(showError);
   </script>
 </body>
 </html>

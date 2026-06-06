@@ -176,6 +176,31 @@ class ApiMockMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(greaterThanOrEqualTo(1))));
 
+        MvcResult todayResult = mockMvc.perform(get("/api/v1/recommendations/today")
+                        .param("userId", "alice")
+                        .param("refresh", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("alice"))
+                .andExpect(jsonPath("$.summary").exists())
+                .andExpect(jsonPath("$.profileTags", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.items", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.items[0].score").value(greaterThanOrEqualTo(0.1)))
+                .andExpect(jsonPath("$.items[0].reason").exists())
+                .andExpect(jsonPath("$.items[0].matchedTags").isArray())
+                .andExpect(jsonPath("$.items[0].actions.click").exists())
+                .andExpect(jsonPath("$.items[0].actions.notInterested").exists())
+                .andReturn();
+
+        Integer v1RecommendationId = JsonPath.read(todayResult.getResponse().getContentAsString(),
+                "$.items[0].id");
+        mockMvc.perform(post("/api/v1/recommendations/{id}/click", v1RecommendationId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.feedback").value("READ"));
+
+        mockMvc.perform(post("/api/v1/recommendations/{id}/not-interested", v1RecommendationId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.feedback").value("DISLIKE"));
+
         mockMvc.perform(post("/api/integrations/feishu/push-recommendations")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -287,18 +312,45 @@ class ApiMockMvcTest {
                                       "url": "https://www.bilibili.com/video/BV1demo",
                                       "summary": "Watched recommendation-system practice video.",
                                       "tags": ["bilibili", "java", "recommendation"]
+                                    },
+                                    {
+                                      "userId": "alice",
+                                      "platform": "douyin",
+                                      "source": "manual-export",
+                                      "externalId": "douyin-aweme-001",
+                                      "type": "WATCH",
+                                      "title": "Douyin AI productivity short video",
+                                      "url": "https://www.douyin.com/search/AI%20productivity",
+                                      "summary": "Uploaded from a compliant Douyin viewing export.",
+                                      "tags": ["douyin", "ai", "productivity", "short-video"]
+                                    },
+                                    {
+                                      "userId": "alice",
+                                      "platform": "douyin",
+                                      "source": "codex-app-proxy",
+                                      "externalId": "douyin_widget-35524",
+                                      "type": "VISIT",
+                                      "title": "正在使用抖音",
+                                      "url": "",
+                                      "summary": "本地代理检测到窗口：抖音",
+                                      "text": "process=douyin_widget pid=35524 title=抖音",
+                                      "occurredAt": "2026-06-06T16:21:05",
+                                      "tags": ["app-usage", "douyin", "short-video"]
                                     }
                                   ]
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.imported").value(3))
+                .andExpect(jsonPath("$.imported").value(5))
                 .andExpect(jsonPath("$.skipped").value(0))
                 .andExpect(jsonPath("$.messagesPublished").value(0))
-                .andExpect(jsonPath("$.activities", hasSize(3)))
+                .andExpect(jsonPath("$.activities", hasSize(5)))
                 .andExpect(jsonPath("$.activities[0].platform").value("xiaohongshu"))
                 .andExpect(jsonPath("$.activities[1].platform").value("wechat"))
-                .andExpect(jsonPath("$.activities[2].platform").value("bilibili"));
+                .andExpect(jsonPath("$.activities[2].platform").value("bilibili"))
+                .andExpect(jsonPath("$.activities[3].platform").value("douyin"))
+                .andExpect(jsonPath("$.activities[4].platform").value("douyin"))
+                .andExpect(jsonPath("$.activities[4].occurredAt").value("2026-06-06T16:21:05"));
 
         mockMvc.perform(get("/api/profile/daily")
                         .param("userId", "alice")
@@ -308,6 +360,7 @@ class ApiMockMvcTest {
                 .andExpect(jsonPath("$.summary").exists())
                 .andExpect(jsonPath("$.last7Days.days").value(7))
                 .andExpect(jsonPath("$.last7Days.activityCount").value(greaterThanOrEqualTo(3)))
+                .andExpect(jsonPath("$.last7Days.platformCounts.douyin").value(greaterThanOrEqualTo(1)))
                 .andExpect(jsonPath("$.last30Days.days").value(30))
                 .andExpect(jsonPath("$.last30Days.activityCount").value(greaterThanOrEqualTo(3)))
                 .andExpect(jsonPath("$.topTags", hasSize(greaterThanOrEqualTo(1))))
@@ -353,6 +406,138 @@ class ApiMockMvcTest {
 
     @Test
     @Order(6)
+    void agentTaskBoundaryNormalizesAndIngestsInterestItems() throws Exception {
+        mockMvc.perform(post("/api/agent/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "userId": "alice",
+                                  "taskId": "agent-bili-001",
+                                  "adapter": "agent-reach",
+                                  "intent": "read-video",
+                                  "ingest": true,
+                                  "items": [
+                                    {
+                                      "platform": "bilibili",
+                                      "type": "WATCH",
+                                      "externalId": "BV1demo",
+                                      "title": "Bilibili recommendation architecture video",
+                                      "url": "https://www.bilibili.com/video/BV1demo",
+                                      "summary": "Agent Reach summarized a public recommendation architecture video.",
+                                      "tags": ["bilibili", "architecture", "recommendation"]
+                                    },
+                                    {
+                                      "platform": "xiaohongshu",
+                                      "type": "FAVORITE",
+                                      "externalId": "xhs-note-demo",
+                                      "title": "Xiaohongshu AI workflow note",
+                                      "url": "https://www.xiaohongshu.com/explore/demo",
+                                      "summary": "Local agent normalized a public note into interest data.",
+                                      "tags": ["xiaohongshu", "ai", "workflow"]
+                                    }
+                                  ],
+                                  "metadata": {
+                                    "privacy": "public-interest-only"
+                                  }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.taskId").value("agent-bili-001"))
+                .andExpect(jsonPath("$.adapter").value("agent-reach"))
+                .andExpect(jsonPath("$.status").value("INGESTED"))
+                .andExpect(jsonPath("$.received").value(2))
+                .andExpect(jsonPath("$.imported").value(2))
+                .andExpect(jsonPath("$.skipped").value(0))
+                .andExpect(jsonPath("$.events", hasSize(2)))
+                .andExpect(jsonPath("$.events[0].source").value("agent-reach"))
+                .andExpect(jsonPath("$.events[0].tags", hasSize(greaterThanOrEqualTo(4))))
+                .andExpect(jsonPath("$.activities", hasSize(2)))
+                .andExpect(jsonPath("$.activities[0].platform").value("bilibili"))
+                .andExpect(jsonPath("$.activities[1].platform").value("xiaohongshu"));
+    }
+
+    @Test
+    @Order(7)
+    void agentQueryQueueCanLaunchClaimAndCompleteCodexStyleTask() throws Exception {
+        MvcResult created = mockMvc.perform(post("/api/agent/queries")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "userId": "alice",
+                                  "adapter": "agent-reach",
+                                  "platform": "youtube",
+                                  "intent": "read-video",
+                                  "url": "https://www.youtube.com/watch?v=demo",
+                                  "query": "AI agent local worker"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("alice"))
+                .andExpect(jsonPath("$.adapter").value("agent-reach"))
+                .andExpect(jsonPath("$.platform").value("youtube"))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.prompt").exists())
+                .andReturn();
+
+        String taskId = JsonPath.read(created.getResponse().getContentAsString(), "$.taskId");
+
+        mockMvc.perform(post("/api/agent/queries/claim-next"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.taskId").value(taskId))
+                .andExpect(jsonPath("$.status").value("RUNNING"))
+                .andExpect(jsonPath("$.prompt").exists());
+
+        mockMvc.perform(post("/api/agent/queries/{taskId}/result", taskId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "success": true,
+                                  "ingest": true,
+                                  "summary": "Worker returned a structured public video summary.",
+                                  "items": [
+                                    {
+                                      "platform": "youtube",
+                                      "type": "WATCH",
+                                      "externalId": "demo",
+                                      "title": "YouTube AI Agent Local Worker",
+                                      "url": "https://www.youtube.com/watch?v=demo",
+                                      "author": "Demo Channel",
+                                      "summary": "The video explains how a local worker can call an agent tool and return structured JSON.",
+                                      "occurredAt": "2026-06-06T16:21:05",
+                                      "tags": ["youtube", "agent", "worker"]
+                                    }
+                                  ],
+                                  "metadata": {
+                                    "privacy": "public-interest-only"
+                                  }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.task.taskId").value(taskId))
+                .andExpect(jsonPath("$.task.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.ingestion.status").value("INGESTED"))
+                .andExpect(jsonPath("$.ingestion.imported").value(1))
+                .andExpect(jsonPath("$.ingestion.activities[0].platform").value("youtube"))
+                .andExpect(jsonPath("$.ingestion.activities[0].occurredAt").value("2026-06-06T16:21:05"));
+    }
+
+    @Test
+    @Order(8)
+    void localWorkerStartIsDisabledByDefault() throws Exception {
+        mockMvc.perform(post("/api/agent/worker/start-once")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "dryRun": true,
+                                  "limit": 1
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("LOCAL_WORKER_DISABLED"));
+    }
+
+    @Test
+    @Order(9)
     void validationErrorShapeIsStable() throws Exception {
         mockMvc.perform(post("/api/visits")
                         .contentType(MediaType.APPLICATION_JSON)

@@ -1,0 +1,74 @@
+codex-data-agent:
+  enabled: true
+  mode: local-first
+  authorization:
+    default-expire-days: 180
+  storage:
+    raw-path: data/raw
+    imports-path: data/imports
+    processed-path: data/processed
+    profiles-path: data/profiles
+    recommendations-path: data/recommendations
+  sources:
+    app-usage-summary:
+      enabled: true
+      sample-file: data/imports/app_usage_sample.json
+    browser-history:
+      enabled: true
+      sample-file: data/imports/browser_history_sample.json
+    public-url-metadata:
+      enabled: true
+      max-urls-per-task: 20
+    local-notes:
+      enabled: true
+      allowed-extensions:
+        - .md
+        - .txt
+        - .csv
+        - .json
+        - .html
+  security:
+    allowed-paths:
+      - data/raw
+      - data/imports
+      - data/local-notes
+    allowed-domains:
+      - xiaohongshu.com
+      - weixin.qq.com
+      - douyin.com
+      - youtube.com
+      - bilibili.com
+      - zhihu.com
+      - github.com
+      - csdn.net
+      - juejin.cn
+    allowed-apps:
+      - com.xingin.xhs
+      - com.tencent.mm
+      - com.ss.android.ugc.aweme
+      - com.google.android.youtube
+      - tv.danmaku.bili
+    blocked-keywords:
+      - cookie
+      - token
+      - session
+      - password
+      - passwd
+      - authorization
+      - 私信
+      - 聊天记录
+      - 通讯录
+      - 支付记录
+      - 微信数据库
+      - 验证码
+  privacy:
+    sanitize: true
+    keep-raw-text: false
+    max-text-length: 500
+  limits:
+    max-records-per-task: 300
+    max-file-size-mb: 10
+    max-url-per-task: 20
+  recommendation:
+    top-k: 10
+    default-language: zh-CN

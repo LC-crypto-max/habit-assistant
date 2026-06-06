@@ -2,9 +2,12 @@ package com.example.assistant.service;
 
 import com.example.assistant.config.AssistantProperties;
 import com.example.assistant.dto.ActivityRequest;
+import com.example.assistant.dto.DailyProfileResponse;
+import com.example.assistant.dto.InterestTermResponse;
 import com.example.assistant.dto.RecommendationRefreshPolicyResponse;
 import com.example.assistant.dto.RecommendationResponse;
 import com.example.assistant.dto.RecommendationSearchResponse;
+import com.example.assistant.dto.RecommendationTodayResponse;
 import com.example.assistant.dto.SearchTermRequest;
 import com.example.assistant.model.ActivityType;
 import com.example.assistant.model.ContentItem;
@@ -159,6 +162,29 @@ public class RecommendationService {
                 .toList();
     }
 
+    @Transactional
+    public RecommendationTodayResponse todayView(String userId, boolean refresh) {
+        String resolvedUserId = userContext.resolve(userId);
+        List<RecommendationResponse> recommendations = refresh
+                ? refreshToday(resolvedUserId)
+                : autoRefreshToday(resolvedUserId);
+        DailyProfileResponse profile = profileService.dailyProfile(resolvedUserId, false);
+        List<String> profileTerms = profile.topTags().stream()
+                .map(InterestTermResponse::term)
+                .toList();
+        List<RecommendationTodayResponse.Item> items = recommendations.stream()
+                .map(recommendation -> toTodayItem(recommendation, profileTerms))
+                .toList();
+        return new RecommendationTodayResponse(
+                resolvedUserId,
+                LocalDate.now(),
+                LocalDateTime.now(),
+                summary(resolvedUserId, items, profile.summary()),
+                refreshPolicy(resolvedUserId),
+                profile.topTags(),
+                items);
+    }
+
     @Transactional(readOnly = true)
     public RecommendationRefreshPolicyResponse refreshPolicy(String userId) {
         String resolvedUserId = userContext.resolve(userId);
@@ -193,6 +219,16 @@ public class RecommendationService {
         Recommendation saved = recommendationRepository.save(recommendation);
         recordFeedbackActivity(saved, feedback);
         return toResponse(saved);
+    }
+
+    @Transactional
+    public RecommendationResponse recordClick(Long id) {
+        return updateFeedback(id, FeedbackType.READ);
+    }
+
+    @Transactional
+    public RecommendationResponse markNotInterested(Long id) {
+        return updateFeedback(id, FeedbackType.DISLIKE);
     }
 
     private ContentItem saveContent(CollectedContent content) {
@@ -354,6 +390,61 @@ public class RecommendationService {
         }
 
         return new FeedbackSignals(likedPlatforms, dislikedPlatforms, blockedPlatforms, likedTags, dislikedTags);
+    }
+
+    private RecommendationTodayResponse.Item toTodayItem(RecommendationResponse recommendation, List<String> profileTerms) {
+        RecommendationResponse.Content content = recommendation.content();
+        return new RecommendationTodayResponse.Item(
+                recommendation.id(),
+                content.id(),
+                content.platform(),
+                content.title(),
+                content.url(),
+                content.author(),
+                content.summary(),
+                content.publishedAt(),
+                content.tags(),
+                recommendation.score(),
+                recommendation.reason(),
+                recommendation.feedback(),
+                matchedTags(content, profileTerms),
+                new RecommendationTodayResponse.Actions(
+                        "/api/v1/recommendations/" + recommendation.id() + "/click",
+                        "/api/v1/recommendations/" + recommendation.id() + "/not-interested",
+                        "/api/v1/recommendations/" + recommendation.id() + "/feedback"));
+    }
+
+    private List<String> matchedTags(RecommendationResponse.Content content, List<String> profileTerms) {
+        String haystack = normalize(String.join(" ",
+                content.title() == null ? "" : content.title(),
+                content.summary() == null ? "" : content.summary(),
+                String.join(" ", content.tags())));
+        return profileTerms.stream()
+                .filter(term -> !normalize(term).isBlank())
+                .filter(term -> haystack.contains(normalize(term)))
+                .limit(8)
+                .toList();
+    }
+
+    private String summary(String userId, List<RecommendationTodayResponse.Item> items, String profileSummary) {
+        if (items.isEmpty()) {
+            return "用户 " + userId + " 暂无今日推荐。建议先上传浏览、搜索、观看或收藏行为，再刷新推荐。";
+        }
+        String platforms = items.stream()
+                .map(RecommendationTodayResponse.Item::platform)
+                .filter(platform -> platform != null && !platform.isBlank())
+                .map(this::normalize)
+                .distinct()
+                .limit(4)
+                .collect(Collectors.joining("、"));
+        String prefix = "今日为用户 " + userId + " 生成 " + items.size() + " 条推荐";
+        if (!platforms.isBlank()) {
+            prefix += "，主要来源包括 " + platforms;
+        }
+        if (profileSummary == null || profileSummary.isBlank()) {
+            return prefix + "。";
+        }
+        return prefix + "。画像摘要：" + profileSummary;
     }
 
     private void recordFeedbackActivity(Recommendation recommendation, FeedbackType feedback) {

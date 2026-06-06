@@ -16,6 +16,7 @@ public class AssistantProperties {
     private Collectors collectors = new Collectors();
     private Feishu feishu = new Feishu();
     private RecommendationRefresh recommendationRefresh = new RecommendationRefresh();
+    private LocalWorker localWorker = new LocalWorker();
 
     public String getUserId() {
         return userId;
@@ -71,6 +72,14 @@ public class AssistantProperties {
 
     public void setRecommendationRefresh(RecommendationRefresh recommendationRefresh) {
         this.recommendationRefresh = recommendationRefresh;
+    }
+
+    public LocalWorker getLocalWorker() {
+        return localWorker;
+    }
+
+    public void setLocalWorker(LocalWorker localWorker) {
+        this.localWorker = localWorker;
     }
 
     public static class HistoryImport {
@@ -421,6 +430,54 @@ public class AssistantProperties {
 
         public void setHighActivityHours(int highActivityHours) {
             this.highActivityHours = highActivityHours;
+        }
+    }
+
+    public static class LocalWorker {
+        private boolean enabled = false;
+        private String baseUrl = "http://localhost:8080";
+        private String scriptPath = "scripts/codex_query_worker.py";
+        private String pythonCommand = "py -3";
+        private int limit = 20;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getScriptPath() {
+            return scriptPath;
+        }
+
+        public void setScriptPath(String scriptPath) {
+            this.scriptPath = scriptPath;
+        }
+
+        public String getPythonCommand() {
+            return pythonCommand;
+        }
+
+        public void setPythonCommand(String pythonCommand) {
+            this.pythonCommand = pythonCommand;
+        }
+
+        public int getLimit() {
+            return limit;
+        }
+
+        public void setLimit(int limit) {
+            this.limit = limit;
         }
     }
 }

@@ -7,6 +7,8 @@ server:
       force: true
 
 spring:
+  config:
+    import: optional:classpath:codex-data-agent.yml
   jackson:
     default-property-inclusion: non_null
   datasource:
@@ -93,3 +95,9 @@ assistant:
       redis:
         enabled: false
         ttl-hours: 24
+  local-worker:
+    enabled: true
+    base-url: http://localhost:8080
+    script-path: scripts/codex_query_worker.py
+    python-command: py -3
+    limit: 20
