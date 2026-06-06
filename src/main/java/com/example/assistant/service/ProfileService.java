@@ -47,6 +47,9 @@ public class ProfileService {
 
     @Transactional
     public void learnFrom(UserActivity activity) {
+        if (!usableForProfile(activity)) {
+            return;
+        }
         List<String> terms = keywordExtractor.extract(joinText(activity), activity.getTags());
         double delta = weightFor(activity.getType());
         LocalDateTime seenAt = activity.getOccurredAt() == null ? LocalDateTime.now() : activity.getOccurredAt();
@@ -103,7 +106,12 @@ public class ProfileService {
                         activity.getUrl(),
                         activity.getText(),
                         activity.getOccurredAt(),
-                        activity.getTags()))
+                        activity.getTags(),
+                        activity.getConfidence(),
+                        activity.getDataLevel(),
+                        activity.getSource(),
+                        activity.getDetectionReason(),
+                        activity.getMatchedKeyword()))
                 .toList();
         return new ProfileResponse(resolvedUserId, terms, activities);
     }
@@ -145,9 +153,15 @@ public class ProfileService {
         List<UserActivity> last7Activities = last30Activities.stream()
                 .filter(activity -> activity.getOccurredAt() != null && activity.getOccurredAt().isAfter(now.minusDays(7)))
                 .toList();
+        List<UserActivity> trustedLast30Activities = last30Activities.stream()
+                .filter(this::usableForProfile)
+                .toList();
+        List<UserActivity> trustedLast7Activities = last7Activities.stream()
+                .filter(this::usableForProfile)
+                .toList();
 
-        ProfileWindowResponse last7Days = windowProfile(7, last7Activities);
-        ProfileWindowResponse last30Days = windowProfile(30, last30Activities);
+        ProfileWindowResponse last7Days = windowProfile(7, trustedLast7Activities);
+        ProfileWindowResponse last30Days = windowProfile(30, trustedLast30Activities);
         List<InterestTermResponse> topTags = mergeTopTags(last7Days.tags(), last30Days.tags());
         List<ActivityResponse> recentActivities = last30Activities.stream()
                 .limit(30)
@@ -278,7 +292,12 @@ public class ProfileService {
                 activity.getUrl(),
                 activity.getText(),
                 activity.getOccurredAt(),
-                activity.getTags());
+                activity.getTags(),
+                activity.getConfidence(),
+                activity.getDataLevel(),
+                activity.getSource(),
+                activity.getDetectionReason(),
+                activity.getMatchedKeyword());
     }
 
     private String joinText(UserActivity activity) {
@@ -286,6 +305,42 @@ public class ProfileService {
                 activity.getTitle() == null ? "" : activity.getTitle(),
                 activity.getText() == null ? "" : activity.getText(),
                 activity.getPlatform() == null ? "" : activity.getPlatform());
+    }
+
+    private boolean usableForProfile(UserActivity activity) {
+        if (activity == null) {
+            return false;
+        }
+        String title = normalize(activity.getTitle());
+        String text = normalize(activity.getText());
+        if (title.isBlank() && text.isBlank()) {
+            return false;
+        }
+        if (looksMojibake(title) || looksMojibake(text)) {
+            return false;
+        }
+        if (isSystemWindow(title) || isSystemWindow(normalize(activity.getPlatform()))) {
+            return false;
+        }
+        String confidence = normalize(activity.getConfidence()).toUpperCase(Locale.ROOT);
+        String dataLevel = normalize(activity.getDataLevel()).toUpperCase(Locale.ROOT);
+        if ("LOW".equals(confidence) && "APP_USAGE_SNAPSHOT".equals(dataLevel)) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean looksMojibake(String value) {
+        return value.contains("�") || value.contains("鏆") || value.contains("灏") || value.contains("绔");
+    }
+
+    private boolean isSystemWindow(String value) {
+        return value.contains("windowsterminal")
+                || value.contains("textinputhost")
+                || value.contains("systemsettings")
+                || value.contains("settings")
+                || value.contains("powershell")
+                || value.contains("cmd.exe");
     }
 
     private double weightFor(ActivityType type) {

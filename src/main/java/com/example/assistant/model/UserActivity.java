@@ -38,6 +38,16 @@ public class UserActivity {
 
     private LocalDateTime occurredAt;
 
+    private String confidence;
+
+    private String dataLevel;
+
+    private String source;
+
+    private String detectionReason;
+
+    private String matchedKeyword;
+
     @ElementCollection
     private List<String> tags = new ArrayList<>();
 
@@ -46,6 +56,12 @@ public class UserActivity {
 
     public UserActivity(String userId, ActivityType type, String platform, String title, String url, String text,
             LocalDateTime occurredAt, List<String> tags) {
+        this(userId, type, platform, title, url, text, occurredAt, tags, null, null, null, null, null);
+    }
+
+    public UserActivity(String userId, ActivityType type, String platform, String title, String url, String text,
+            LocalDateTime occurredAt, List<String> tags, String confidence, String dataLevel, String source,
+            String detectionReason, String matchedKeyword) {
         this.userId = userId;
         this.type = type;
         this.platform = platform;
@@ -54,6 +70,11 @@ public class UserActivity {
         this.text = text;
         this.occurredAt = occurredAt;
         this.tags = tags == null ? new ArrayList<>() : new ArrayList<>(tags);
+        this.confidence = confidence;
+        this.dataLevel = dataLevel;
+        this.source = source;
+        this.detectionReason = detectionReason;
+        this.matchedKeyword = matchedKeyword;
     }
 
     public Long getId() {
@@ -90,5 +111,25 @@ public class UserActivity {
 
     public List<String> getTags() {
         return tags;
+    }
+
+    public String getConfidence() {
+        return confidence;
+    }
+
+    public String getDataLevel() {
+        return dataLevel;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public String getDetectionReason() {
+        return detectionReason;
+    }
+
+    public String getMatchedKeyword() {
+        return matchedKeyword;
     }
 }

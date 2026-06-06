@@ -83,8 +83,8 @@ assistant:
     medium-activity-threshold: 20
     high-activity-threshold: 80
     low-activity-hours: 12
-    medium-activity-hours: 6
-    high-activity-hours: 3
+    medium-activity-hours: 12
+    high-activity-hours: 12
   behavior:
     rabbitmq:
       enabled: false
@@ -101,3 +101,15 @@ assistant:
     script-path: scripts/codex_query_worker.py
     python-command: py -3
     limit: 20
+  auth:
+    enabled: false
+    users:
+      - user-id: alice
+        password: ${HABIT_ALICE_PASSWORD:alice123}
+        admin: false
+      - user-id: bob
+        password: ${HABIT_BOB_PASSWORD:bob123}
+        admin: false
+      - user-id: admin
+        password: ${HABIT_ADMIN_PASSWORD:admin123}
+        admin: true

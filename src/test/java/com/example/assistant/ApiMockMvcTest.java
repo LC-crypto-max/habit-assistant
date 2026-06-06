@@ -35,6 +35,20 @@ class ApiMockMvcTest {
         mockMvc.perform(get("/actuator/health"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"));
+
+        mockMvc.perform(get("/api/recommendations/today")
+                        .param("userId", "no-data-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("no-data-user"))
+                .andExpect(jsonPath("$.status").value("EMPTY"))
+                .andExpect(jsonPath("$.behaviorCount24h").value(0))
+                .andExpect(jsonPath("$.recommendations", hasSize(0)))
+                .andExpect(jsonPath("$.message").value("暂无推荐数据，请先创建采集任务并启动 worker。"));
+
+        mockMvc.perform(get("/api/recommendations/today"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").exists())
+                .andExpect(jsonPath("$.status").value("EMPTY"));
     }
 
     @Test
@@ -168,13 +182,22 @@ class ApiMockMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value("alice"))
                 .andExpect(jsonPath("$.recentActivityCount").value(greaterThanOrEqualTo(2)))
-                .andExpect(jsonPath("$.refreshHours").value(6))
+                .andExpect(jsonPath("$.refreshHours").value(12))
                 .andExpect(jsonPath("$.expired").value(false));
 
         mockMvc.perform(post("/api/recommendations/refresh")
                         .param("userId", "alice"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(greaterThanOrEqualTo(1))));
+
+        mockMvc.perform(get("/api/recommendations/today")
+                        .param("userId", "alice"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("alice"))
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.behaviorCount24h").value(greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.recommendations", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.message").value("已同步最新访问记录和推荐。"));
 
         MvcResult todayResult = mockMvc.perform(get("/api/v1/recommendations/today")
                         .param("userId", "alice")
@@ -351,6 +374,61 @@ class ApiMockMvcTest {
                 .andExpect(jsonPath("$.activities[3].platform").value("douyin"))
                 .andExpect(jsonPath("$.activities[4].platform").value("douyin"))
                 .andExpect(jsonPath("$.activities[4].occurredAt").value("2026-06-06T16:21:05"));
+
+        mockMvc.perform(post("/api/activities")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "userId": "alice",
+                                  "type": "VISIT",
+                                  "platform": "xiaohongshu",
+                                  "title": "正在使用小红书",
+                                  "text": "本地 Codex 代理检测到窗口：小红书",
+                                  "tags": ["app-usage", "visible-window", "xiaohongshu"]
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/activities")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "userId": "alice",
+                                  "type": "VISIT",
+                                  "platform": "xiaohongshu",
+                                  "title": "小红书 AI 工具笔记",
+                                  "url": "https://www.xiaohongshu.com/explore/test-note",
+                                  "text": "浏览器历史导入的小红书访问记录",
+                                  "tags": ["browser-history", "xiaohongshu"]
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/activities")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "userId": "alice",
+                                  "type": "VISIT",
+                                  "platform": "xiaohongshu",
+                                  "title": "小红书公开页面摘要",
+                                  "url": "https://www.xiaohongshu.com/explore/page-content",
+                                  "text": "页面可见内容摘要：AI 工作流、效率工具、笔记整理。",
+                                  "tags": ["page-visit", "browser-extension", "xiaohongshu"]
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/platforms/xiaohongshu/usage-summary")
+                        .param("userId", "alice"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.platform").value("xiaohongshu"))
+                .andExpect(jsonPath("$.userId").value("alice"))
+                .andExpect(jsonPath("$.overallConfidence").value("HIGH"))
+                .andExpect(jsonPath("$.windowsAppSignals", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.browserHistorySignals", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.pageContentSignals", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.summary").value("检测到你今天访问过小红书公开页面内容。"));
 
         mockMvc.perform(get("/api/profile/daily")
                         .param("userId", "alice")

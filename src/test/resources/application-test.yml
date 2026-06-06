@@ -62,8 +62,8 @@ assistant:
     medium-activity-threshold: 2
     high-activity-threshold: 5
     low-activity-hours: 12
-    medium-activity-hours: 6
-    high-activity-hours: 3
+    medium-activity-hours: 12
+    high-activity-hours: 12
   behavior:
     rabbitmq:
       enabled: false

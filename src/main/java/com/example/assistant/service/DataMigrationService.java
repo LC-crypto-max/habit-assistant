@@ -146,7 +146,12 @@ public class DataMigrationService {
                 activity.getUrl(),
                 activity.getText(),
                 activity.getOccurredAt(),
-                activity.getTags());
+                activity.getTags(),
+                activity.getConfidence(),
+                activity.getDataLevel(),
+                activity.getSource(),
+                activity.getDetectionReason(),
+                activity.getMatchedKeyword());
     }
 
     private ContentItemBackupRecord toContentRecord(ContentItem content) {

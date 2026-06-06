@@ -235,7 +235,7 @@ POST /api/datasources/xiaohongshu/events
 | Key | Value | TTL |
 | --- | --- | --- |
 | `profile:{userId}:topTerms` | Top 兴趣词 JSON | 10 分钟 |
-| `recommend:{userId}:{date}` | 今日推荐 JSON | 3/6/12 小时 |
+| `recommend:{userId}:{date}` | 今日推荐 JSON | 默认 12 小时 |
 | `refresh-policy:{userId}` | 推荐刷新策略 JSON | 5 分钟 |
 | `rate-limit:{userId}` | 接口限流计数 | 1 分钟 |
 | `page:{userId}:{date}` | 每日 HTML 地址 | 24 小时 |

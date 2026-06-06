@@ -51,6 +51,54 @@ POST /api/codex-agent/client/app-usage
 
 第一版读取 `data/imports/browser_history_sample.json`。后续可以扩展真实浏览器 SQLite History 文件读取，但只允许 URL、标题、访问时间和访问次数。
 
+## 8.1 小红书采集能力分层
+
+小红书数据采集不能等同于“直接读取 App 内部数据”。当前项目按三层能力处理：
+
+Level 1：可见窗口快照
+
+- 数据来源：Windows 当前可见窗口标题、进程名、浏览器窗口标题。
+- 能力：判断用户是否正在使用小红书、Bilibili、YouTube 或浏览器相关窗口。
+- 限制：不能获取完整访问历史，不能获取具体笔记详情、收藏、点赞、搜索记录，也不能读取 App 内部数据。
+- 数据语义：`source=visible-window`，`confidence=LOW`，`dataLevel=APP_USAGE_SNAPSHOT`。
+
+Level 2：浏览器历史
+
+- 数据来源：用户授权范围内的 Chrome/Edge History SQLite 副本。
+- 只读取：`title`、`url`、`visitTime`、`visitCount`。
+- 只筛选授权域名，例如 `xiaohongshu.com`、`www.xiaohongshu.com`、`xhslink.com`。
+- 数据语义：`source=browser-history`，`confidence=MEDIUM`，`dataLevel=BROWSER_HISTORY`。
+- 可通过 `scripts/import-browser-history.ps1` 或后续 Python 导入脚本实现。
+
+Level 3：浏览器插件 / 客户端上报
+
+- 数据来源：用户安装并授权的浏览器插件或本地客户端。
+- 插件只在授权域名下读取页面公开可见字段，例如标题、URL、公开作者、公开标签和页面摘要。
+- 数据语义：`source=browser-extension`，`confidence=HIGH`，`dataLevel=PAGE_VISIBLE_CONTENT`。
+- 后续可预留 `POST /api/v1/client/page-visit`，复用 DataPolicyChecker、PrivacySanitizer 和行为入库链路。
+
+无论哪一层，都不得读取 Cookie、Token、Session、账号密码、私信、聊天记录、支付信息或平台受保护内容。
+
+## 8.2 Windows 中文乱码处理
+
+乱码主要来自 Windows 子进程输出，而不是 Spring Boot JSON。当前 worker 已尽量使用 Windows Unicode API 读取窗口标题，避免解析 PowerShell `Get-Process` 文本输出。
+
+手动运行脚本时建议：
+
+```powershell
+chcp 65001
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+py -3 .\scripts\codex_query_worker.py --once --base-url http://localhost:8080
+```
+
+Python 侧要求：
+
+- `json.dumps(payload, ensure_ascii=False).encode("utf-8")`
+- `Content-Type: application/json; charset=utf-8`
+- `Accept: application/json`
+- `sys.stdout/sys.stderr` 尽量 reconfigure 为 UTF-8。
+
 ## 9. REST API 使用方式
 
 授权：

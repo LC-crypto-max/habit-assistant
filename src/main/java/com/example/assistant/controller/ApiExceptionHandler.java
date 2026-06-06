@@ -37,4 +37,12 @@ public class ApiExceptionHandler {
                 "error", "INVALID_REQUEST_BODY",
                 "message", "请求体格式不正确，请检查 JSON 和日期格式。");
     }
+
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    @ExceptionHandler(IllegalStateException.class)
+    public Map<String, String> internalStateError(IllegalStateException exception) {
+        return Map.of(
+                "error", "INTERNAL_STATE_ERROR",
+                "message", exception.getMessage() == null ? "后端执行状态异常。" : exception.getMessage());
+    }
 }

@@ -106,7 +106,12 @@ public class VisitRecordService {
                 request.url(),
                 text,
                 request.visitedAt(),
-                tags);
+                tags,
+                "MEDIUM",
+                "BROWSER_HISTORY",
+                "browser-history",
+                "browser_history",
+                request.url());
     }
 
     private VisitRecordRequest toVisitRecord(List<String> cells, HeaderIndex header, String importUserId) {

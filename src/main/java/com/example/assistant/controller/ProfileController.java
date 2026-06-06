@@ -25,6 +25,11 @@ public class ProfileController {
         return profileService.currentProfile(userId);
     }
 
+    @GetMapping("/current")
+    public DailyProfileResponse currentDailyProfile() {
+        return profileService.dailyProfile(null, true);
+    }
+
     @GetMapping("/daily")
     public DailyProfileResponse dailyProfile(@RequestParam(required = false) String userId,
             @RequestParam(defaultValue = "false") boolean refresh) {

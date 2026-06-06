@@ -12,9 +12,10 @@ No third-party Python packages are required.
 from __future__ import annotations
 
 import argparse
+import ctypes
+from ctypes import wintypes
 import json
 import os
-import subprocess
 import sys
 import time
 import urllib.error
@@ -29,6 +30,12 @@ DEFAULT_BASE_URL = "http://localhost:8080"
 DEFAULT_PROXY_PORT = 8765
 DEFAULT_LIMIT = 80
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 
 @dataclass
 class AppInfo:
@@ -39,69 +46,117 @@ class AppInfo:
     tags: list[str]
 
 
+class WindowInfo:
+    def __init__(self, process_id: int, process_name: str, window_title: str):
+        self.process_id = process_id
+        self.process_name = process_name
+        self.window_title = window_title
+
+
 def now_iso() -> str:
     return datetime.now().replace(microsecond=0).isoformat()
 
 
 def infer_platform(process_name: str, title: str) -> tuple[str, list[str]]:
-    text = f"{process_name} {title}".lower()
-    rules = [
-        ("bilibili", ["bilibili", "哔哩", "b站"], ["bilibili", "video"]),
-        ("douyin", ["douyin", "抖音"], ["douyin", "short-video"]),
-        ("xiaohongshu", ["xiaohongshu", "小红书"], ["xiaohongshu", "lifestyle"]),
-        ("wechat", ["wechat", "微信", "weixin"], ["wechat", "social"]),
-        ("youtube", ["youtube"], ["youtube", "video"]),
+    process = process_name.lower()
+    title_text = title.lower()
+    browser_rules = [
         ("browser-edge", ["msedge", "edge"], ["browser", "edge"]),
         ("browser-chrome", ["chrome"], ["browser", "chrome"]),
+        ("browser", ["slbrowser", "sogouexplorer", "firefox"], ["browser"]),
     ]
+    for platform, needles, tags in browser_rules:
+        if any(needle in process for needle in needles):
+            extra_tags = ["app-usage", *tags]
+            if any(needle in title_text for needle in ["xiaohongshu", "小红书", "xhs"]):
+                extra_tags.extend(["xiaohongshu", "lifestyle"])
+            if any(needle in title_text for needle in ["bilibili", "哔哩", "b站"]):
+                extra_tags.extend(["bilibili", "video"])
+            if "youtube" in title_text:
+                extra_tags.extend(["youtube", "video"])
+            return platform, extra_tags
+
+    rules = [
+        ("xiaohongshu", ["xiaohongshu", "小红书", "xhs"], ["xiaohongshu", "lifestyle"]),
+        ("bilibili", ["bilibili", "哔哩", "b站"], ["bilibili", "video"]),
+        ("douyin", ["douyin", "抖音"], ["douyin", "short-video"]),
+        ("wechat", ["wechat", "微信", "weixin"], ["wechat", "social"]),
+        ("youtube", ["youtube"], ["youtube", "video"]),
+    ]
+    text = f"{process} {title_text}"
     for platform, needles, tags in rules:
         if any(needle in text for needle in needles):
             return platform, ["app-usage", *tags]
     return "desktop-app", ["app-usage", "desktop"]
 
 
+def collect_windows_via_api(limit: int) -> list[WindowInfo]:
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    enum_windows = user32.EnumWindows
+    enum_windows_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    is_window_visible = user32.IsWindowVisible
+    get_window_text_length = user32.GetWindowTextLengthW
+    get_window_text = user32.GetWindowTextW
+    get_window_thread_process_id = user32.GetWindowThreadProcessId
+
+    open_process = kernel32.OpenProcess
+    query_full_process_image_name = kernel32.QueryFullProcessImageNameW
+    close_handle = kernel32.CloseHandle
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+    rows: list[WindowInfo] = []
+
+    def process_name(pid: int) -> str:
+        handle = open_process(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return ""
+        try:
+            size = wintypes.DWORD(32768)
+            buffer = ctypes.create_unicode_buffer(size.value)
+            if query_full_process_image_name(handle, 0, buffer, ctypes.byref(size)):
+                return os.path.splitext(os.path.basename(buffer.value))[0]
+            return ""
+        finally:
+            close_handle(handle)
+
+    def callback(hwnd: int, _lparam: int) -> bool:
+        if len(rows) >= limit:
+            return False
+        if not is_window_visible(hwnd):
+            return True
+        length = get_window_text_length(hwnd)
+        if length <= 0:
+            return True
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        get_window_text(hwnd, buffer, length + 1)
+        title = buffer.value.strip()
+        if not title:
+            return True
+        pid = wintypes.DWORD()
+        get_window_thread_process_id(hwnd, ctypes.byref(pid))
+        rows.append(WindowInfo(pid.value, process_name(pid.value), title))
+        return True
+
+    enum_windows(enum_windows_proc(callback), 0)
+    return rows
+
+
 def collect_apps(limit: int = DEFAULT_LIMIT) -> list[AppInfo]:
     if os.name != "nt":
         raise RuntimeError("This collector currently supports Windows only.")
 
-    command = [
-        "powershell",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        (
-            "Get-Process | "
-            "Where-Object { $_.MainWindowTitle -and $_.MainWindowTitle.Trim().Length -gt 0 } | "
-            "Select-Object -First %d Id,ProcessName,MainWindowTitle | "
-            "ConvertTo-Json -Depth 3"
-        )
-        % limit,
-    ]
-    completed = subprocess.run(
-        command,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-    )
-    raw = completed.stdout.strip()
-    if not raw:
-        return []
-    decoded = json.loads(raw)
-    rows = decoded if isinstance(decoded, list) else [decoded]
     apps: list[AppInfo] = []
-    for row in rows:
-        process_name = str(row.get("ProcessName") or "").strip()
-        title = str(row.get("MainWindowTitle") or "").strip()
+    for row in collect_windows_via_api(limit):
+        process_name = row.process_name.strip()
+        title = row.window_title.strip()
         if not process_name or not title:
             continue
         platform, tags = infer_platform(process_name, title)
         apps.append(
             AppInfo(
-                process_id=int(row.get("Id") or 0),
+                process_id=row.process_id,
                 process_name=process_name,
                 window_title=title,
                 platform=platform,
@@ -138,7 +193,10 @@ def post_json(url: str, payload: dict[str, Any], timeout: int = 8) -> dict[str, 
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json; charset=utf-8"},
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json",
+        },
         method="POST",
     )
     try:

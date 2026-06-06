@@ -14,5 +14,10 @@ public record ActivityRequest(
         String url,
         @NotBlank String text,
         LocalDateTime occurredAt,
-        List<String> tags) {
+        List<String> tags,
+        String confidence,
+        String dataLevel,
+        String source,
+        String detectionReason,
+        String matchedKeyword) {
 }

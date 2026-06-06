@@ -51,9 +51,10 @@ public class LocalAgentWorkerService {
                 commandLine);
 
         try {
-            new ProcessBuilder(command)
-                    .directory(workingDirectory.toFile())
-                    .start();
+            ProcessBuilder builder = new ProcessBuilder(command)
+                    .directory(workingDirectory.toFile());
+            normalizeWindowsEnvironment(builder);
+            builder.start();
         } catch (IOException ex) {
             throw new IllegalStateException("LOCAL_WORKER_START_FAILED: " + ex.getMessage(), ex);
         }
@@ -78,7 +79,11 @@ public class LocalAgentWorkerService {
         if (dryRun) {
             args.add("--dry-run");
         }
-        return "$env:PYTHONIOENCODING='utf-8'; " + String.join(" ", args);
+        return "$env:PYTHONIOENCODING='utf-8'; "
+                + "$env:PYTHONUTF8='1'; "
+                + "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+                + "$OutputEncoding=[System.Text.Encoding]::UTF8; "
+                + String.join(" ", args);
     }
 
     private String quote(String value) {
@@ -103,5 +108,25 @@ public class LocalAgentWorkerService {
 
     private boolean isWindows() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private void normalizeWindowsEnvironment(ProcessBuilder builder) {
+        if (!isWindows()) {
+            return;
+        }
+        String pathValue = null;
+        for (String key : List.copyOf(builder.environment().keySet())) {
+            if ("path".equalsIgnoreCase(key)) {
+                if (pathValue == null) {
+                    pathValue = builder.environment().get(key);
+                }
+                builder.environment().remove(key);
+            }
+        }
+        if (pathValue != null) {
+            builder.environment().put("Path", pathValue);
+        }
+        builder.environment().put("PYTHONIOENCODING", "utf-8");
+        builder.environment().put("PYTHONUTF8", "1");
     }
 }

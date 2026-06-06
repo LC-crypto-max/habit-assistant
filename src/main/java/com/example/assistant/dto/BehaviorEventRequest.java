@@ -17,5 +17,9 @@ public record BehaviorEventRequest(
         String summary,
         String text,
         LocalDateTime occurredAt,
-        List<String> tags) {
+        List<String> tags,
+        String confidence,
+        String dataLevel,
+        String detectionReason,
+        String matchedKeyword) {
 }

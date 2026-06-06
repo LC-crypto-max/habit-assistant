@@ -107,7 +107,11 @@ public class AgentTaskService {
                 item.summary(),
                 compactText(item.title(), item.summary(), item.text()),
                 item.occurredAt(),
-                tags(platform, item.tags(), request.intent(), adapter(request)));
+                tags(platform, item.tags(), request.intent(), adapter(request)),
+                item.confidence(),
+                item.dataLevel(),
+                item.detectionReason(),
+                item.matchedKeyword());
     }
 
     private BehaviorEventRequest fromTask(String userId, AgentTaskRequest request) {
@@ -124,7 +128,11 @@ public class AgentTaskService {
                 request.summary(),
                 compactText(request.query(), request.summary(), request.text()),
                 null,
-                tags(platform, List.of(), request.intent(), adapter(request)));
+                tags(platform, List.of(), request.intent(), adapter(request)),
+                null,
+                null,
+                null,
+                firstNonBlank(request.query(), request.url(), platform));
     }
 
     private ActivityType inferType(String url, String title, String text) {

@@ -5,9 +5,12 @@ import com.example.assistant.dto.RecommendationRefreshPolicyResponse;
 import com.example.assistant.dto.RecommendationResponse;
 import com.example.assistant.dto.RecommendationSearchRequest;
 import com.example.assistant.dto.RecommendationSearchResponse;
+import com.example.assistant.dto.RecommendationTodaySummaryResponse;
 import com.example.assistant.service.RecommendationService;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,6 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/recommendations")
 public class RecommendationController {
+
+    private static final Logger log = LoggerFactory.getLogger(RecommendationController.class);
 
     private final RecommendationService recommendationService;
 
@@ -36,9 +41,20 @@ public class RecommendationController {
         return recommendationService.refreshToday(userId);
     }
 
+    @PostMapping("/rebuild")
+    public RecommendationTodaySummaryResponse rebuild(@RequestParam(required = false) String userId) {
+        recommendationService.refreshToday(userId);
+        return recommendationService.todaySummary(userId);
+    }
+
     @GetMapping("/today")
-    public List<RecommendationResponse> today(@RequestParam(required = false) String userId) {
-        return recommendationService.autoRefreshToday(userId);
+    public RecommendationTodaySummaryResponse today(@RequestParam(required = false) String userId) {
+        try {
+            return recommendationService.todaySummary(userId);
+        } catch (RuntimeException ex) {
+            log.error("Failed to load today's recommendations for userId={}", userId, ex);
+            return recommendationService.emptyTodaySummary(userId, "推荐接口暂时不可用，请检查后端日志。");
+        }
     }
 
     @GetMapping("/refresh-policy")

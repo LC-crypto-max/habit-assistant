@@ -70,7 +70,12 @@ public class IntegrationController {
                 request.url(),
                 request.text(),
                 request.occurredAt(),
-                request.tags()));
+                request.tags(),
+                request.confidence(),
+                request.dataLevel(),
+                request.source(),
+                request.detectionReason(),
+                request.matchedKeyword()));
     }
 
     @PostMapping("/mini/users/{userId}/visits")

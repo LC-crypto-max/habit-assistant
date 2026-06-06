@@ -69,8 +69,16 @@ http://localhost:8080/
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| `POST` | `/api/auth/login` | Session 登录 |
+| `POST` | `/api/auth/logout` | 退出登录 |
+| `GET` | `/api/auth/me` | 当前登录用户 |
 | `GET` | `/api/profile?userId=alice` | 查看用户画像 |
+| `GET` | `/api/profile/current` | 查看当前会话用户画像 |
 | `GET` | `/api/recommendations/today?userId=alice` | 查看今日推荐 |
+| `POST` | `/api/recommendations/refresh?userId=alice` | 手动强制重新生成今日推荐 |
+| `POST` | `/api/recommendations/rebuild` | 按当前用户重建推荐 |
+| `GET` | `/api/recommendations/refresh-policy?userId=alice` | 查看推荐过期时间和近 24 小时行为量 |
+| `GET` | `/api/platforms/xiaohongshu/usage-summary?userId=alice` | 查看小红书三层使用摘要 |
 | `POST` | `/api/recommendations/search` | 提交关键词并生成推荐 |
 | `POST` | `/api/visits` | 提交访问记录 |
 | `POST` | `/api/v1/behavior-events/batch` | 批量提交行为事件 |
@@ -79,6 +87,64 @@ http://localhost:8080/
 | `POST` | `/api/agent/queries/claim-next` | worker 领取待执行任务 |
 | `POST` | `/api/agent/queries/{taskId}/result` | worker 回传查询结果 |
 | `POST` | `/api/agent/worker/start-once` | 本机启动一次可见终端 worker，默认关闭 |
+| `POST` | `/api/admin/dev/reset-data` | 开发环境备份并清理测试数据 |
+
+## 用户登录和数据隔离
+
+本地默认 `assistant.auth.enabled=false`，便于继续用 `userId` 测试。公网或多人试用时请开启：
+
+```yaml
+assistant:
+  auth:
+    enabled: true
+```
+
+开启后，后端会优先使用 Session 中的登录用户，忽略前端传入的冒充 `userId`。默认配置提供 `alice`、`bob`、`admin` 三个示例用户，公网部署必须通过环境变量修改密码。
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8080/api/auth/login" `
+  -ContentType "application/json; charset=utf-8" `
+  -Body '{"userId":"alice","password":"alice123"}'
+```
+
+## 数据可信度
+
+行为事件现在会保存：
+
+- `confidence`：`LOW`、`MEDIUM`、`HIGH`
+- `dataLevel`：`APP_USAGE_SNAPSHOT`、`BROWSER_HISTORY`、`PAGE_VISIBLE_CONTENT`、`PUBLIC_URL`、`OFFICIAL_API`
+- `source`
+- `detectionReason`
+- `matchedKeyword`
+
+画像生成会过滤低质量事件：LOW 的窗口快照、乱码标题、系统窗口如 `WindowsTerminal`、`TextInputHost`、`SystemSettings` 不会进入长期兴趣词强化。LOW 信号只辅助判断“可能使用过某个平台”。
+
+## 开发数据清理
+
+当前默认存储是 H2 文件数据库：
+
+```text
+jdbc:h2:file:./data/assistantdb
+```
+
+MySQL profile 可切换到 MySQL。Agent/Codex 的 JSON 目录主要用于样例、导入和文件型 Agent 存储。
+
+开发清理接口：
+
+```powershell
+Invoke-RestMethod -Method Post "http://localhost:8080/api/admin/dev/reset-data" |
+  ConvertTo-Json -Depth 6
+```
+
+接口会先备份到：
+
+```text
+data/backups/YYYYMMDD_HHmmss/
+```
+
+然后清理行为、画像、推荐、Agent Query 和 Codex Agent 相关 JPA 数据。不会删除表结构。
 
 ## 快速提交一条访问记录
 
@@ -104,6 +170,39 @@ Invoke-RestMethod `
 Invoke-RestMethod "http://localhost:8080/api/recommendations/today?userId=alice"
 ```
 
+## 推荐刷新策略
+
+当前推荐采用“自动 12 小时更新 + 手动强制刷新”的策略：
+
+- 页面打开或点击“检查推荐”时调用 `GET /api/recommendations/today`。如果今日推荐不存在或已经超过 12 小时，后端会自动重新生成。
+- 前端点击“强制刷新推荐”或顶部“重算推荐”时调用 `POST /api/recommendations/refresh`，无论是否过期都会删除并重新生成当日推荐。
+- `GET /api/recommendations/refresh-policy` 会返回 `refreshHours=12`、`latestRecommendationAt`、`expiresAt`、`recentActivityCount` 和 `expired`。
+
+示例：
+
+```powershell
+Invoke-RestMethod "http://localhost:8080/api/recommendations/refresh-policy?userId=alice" |
+  ConvertTo-Json -Depth 6
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8080/api/recommendations/refresh?userId=alice" |
+  ConvertTo-Json -Depth 6
+```
+
+无推荐或无行为数据时，`/api/recommendations/today` 不返回 500，而是返回：
+
+```json
+{
+  "userId": "alice",
+  "status": "EMPTY",
+  "refreshIntervalHours": 12,
+  "behaviorCount24h": 0,
+  "recommendations": [],
+  "message": "暂无推荐数据，请先创建采集任务并启动 worker。"
+}
+```
+
 ## Codex 本地查询 Worker
 
 项目已经支持“后端创建任务，用户本地 worker 授权执行，再回调后端”的流程。
@@ -125,6 +224,77 @@ Invoke-RestMethod "http://localhost:8080/api/recommendations/today?userId=alice"
 
 ```powershell
 py -3 .\scripts\codex_query_worker.py --once --base-url http://localhost:8080
+```
+
+### Codex CLI 分析模式
+
+普通 worker 模式只使用脚本内置规则采集和归一化。Codex CLI 分析模式会在本地采集完成后，把 `raw_items` 交给 Codex CLI 做摘要、分类、标签提取和置信度补充，然后再回传后端。
+
+执行链路：
+
+```text
+claim task
+  -> collect_task 采集非敏感 raw_items
+  -> 可选调用 Codex CLI 分析 raw_items
+  -> 字段白名单 + 敏感字段二次校验
+  -> POST /api/agent/queries/{taskId}/result
+```
+
+启用 Codex CLI：
+
+```powershell
+py -3 .\scripts\codex_query_worker.py `
+  --once `
+  --base-url http://localhost:8080 `
+  --use-codex-cli
+```
+
+指定 Codex 命令、打印 prompt 和输出：
+
+```powershell
+py -3 .\scripts\codex_query_worker.py `
+  --once `
+  --base-url http://localhost:8080 `
+  --use-codex-cli `
+  --codex-command codex `
+  --print-codex-prompt `
+  --print-codex-output `
+  --codex-timeout 60
+```
+
+只预览，不回调后端：
+
+```powershell
+py -3 .\scripts\codex_query_worker.py `
+  --once `
+  --dry-run `
+  --base-url http://localhost:8080 `
+  --use-codex-cli `
+  --print-codex-output
+```
+
+Codex CLI 不存在、超时、返回非 JSON、返回敏感字段或敏感内容时，worker 不会崩溃，会打印 warning 并自动 fallback 到原始 `raw_items`。
+
+### 小红书 Codex 代理采集
+
+小红书采集仍然走本地 Codex/Agent worker 的授权式流程，不由后端静默读取用户电脑。推荐做法：
+
+1. 在前端选择“小红书”。
+2. 可选填写一条公开小红书笔记 URL。
+3. 点击“创建采集任务”。
+4. 点击“启动 worker 并授权”，在新 PowerShell 窗口中输入 `y`。
+
+worker 对小红书返回三类信号：
+
+- `LOW / APP_USAGE_SNAPSHOT`：只看到本机可见窗口或应用标题，说明“可能正在使用小红书”。
+- `MEDIUM / BROWSER_HISTORY`：来自授权导入的浏览器历史 URL，说明“访问过小红书网页”。
+- `HIGH / PAGE_VISIBLE_CONTENT`：来自公开页面或后续浏览器插件可见内容摘要，适合用于更准确推荐。
+
+查看小红书摘要：
+
+```powershell
+Invoke-RestMethod "http://localhost:8080/api/platforms/xiaohongshu/usage-summary?userId=alice" |
+  ConvertTo-Json -Depth 8
 ```
 
 只预览，不回调后端：
@@ -170,12 +340,30 @@ assistant:
 - 前端不能传 `--yes`，用户仍需在终端确认。
 - 不建议在公网部署环境开启该能力；线上协作平台应让用户在自己的电脑运行 Local Agent。
 
+如果点击“启动本地 worker”出现 500，常见原因是：
+
+- `py -3` 或 `powershell` 不在 `Path` 中。
+- Windows 环境变量中同时存在 `Path` 和 `PATH`，导致子进程启动失败。
+- `scripts/codex_query_worker.py` 路径不正确。
+- 后端不是从项目根目录启动，导致相对路径找不到脚本。
+
+当前后端会在启动 worker 前清理 `Path/PATH` 冲突，并设置 `PYTHONIOENCODING=utf-8`、`PYTHONUTF8=1`。如果仍失败，请查看接口返回的 `message` 和后端日志。
+
+Windows PowerShell 推荐执行方式：
+
+```powershell
+chcp 65001
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+py -3 .\scripts\codex_query_worker.py --once --base-url http://localhost:8080
+```
+
 注意：
 
 - worker 需要用户在终端确认，后端不会静默读取设备。
 - `agent-reach` skill 不是 Spring Boot 里的 Java Bean，Java 后端不会直接调用 skill。
 - B站/YouTube 公开视频可由 worker 调用本机 `yt-dlp`、`bili` 等 CLI。
-- 终端应用访问概况目前只能读取 Windows 当前可见窗口快照；严格的每日使用时长和打开次数需要 Android Usage Access 客户端或授权统计文件。
+- 终端应用访问概况目前只能读取 Windows 当前可见窗口快照；它是“应用/网页访问信号”，不等于真实完整网页历史。
 - 不读取 Cookie、Token、Session、账号密码、聊天记录、私信、通讯录、支付记录、验证码。
 
 ### Worker 安全策略与测试
@@ -192,6 +380,16 @@ assistant:
 ```powershell
 py -3 -B -m unittest scripts.test_codex_query_worker_policy
 ```
+
+当前测试覆盖：
+
+- Codex CLI 不存在时 fallback；
+- Codex CLI 返回合法 JSON 时使用分析后的 `items`；
+- Codex CLI 返回非 JSON 时 fallback；
+- Codex CLI 输出包含敏感字段时 fallback；
+- visible-window 事件标记为 `LOW / APP_USAGE_SNAPSHOT`；
+- 小红书窗口标题识别为 `xiaohongshu`；
+- Chrome/Edge 不会因为浏览器进程名直接被识别为小红书，除非标题或 URL 包含小红书关键词。
 
 如果本机 `py` 命令不可用，可以直接使用已安装的 Python 解释器：
 

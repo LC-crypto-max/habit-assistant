@@ -65,7 +65,12 @@ public class BehaviorEventService {
                 event.url(),
                 text(event),
                 event.occurredAt(),
-                tags(event, platform));
+                tags(event, platform),
+                event.confidence(),
+                event.dataLevel(),
+                firstNonBlank(event.source(), "client"),
+                event.detectionReason(),
+                event.matchedKeyword());
     }
 
     private BehaviorEventMessage toMessage(String userId, BehaviorEventRequest event, ActivityResponse saved) {

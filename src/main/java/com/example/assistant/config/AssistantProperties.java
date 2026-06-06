@@ -17,6 +17,7 @@ public class AssistantProperties {
     private Feishu feishu = new Feishu();
     private RecommendationRefresh recommendationRefresh = new RecommendationRefresh();
     private LocalWorker localWorker = new LocalWorker();
+    private Auth auth = new Auth();
 
     public String getUserId() {
         return userId;
@@ -80,6 +81,14 @@ public class AssistantProperties {
 
     public void setLocalWorker(LocalWorker localWorker) {
         this.localWorker = localWorker;
+    }
+
+    public Auth getAuth() {
+        return auth;
+    }
+
+    public void setAuth(Auth auth) {
+        this.auth = auth;
     }
 
     public static class HistoryImport {
@@ -381,8 +390,8 @@ public class AssistantProperties {
         private int mediumActivityThreshold = 20;
         private int highActivityThreshold = 80;
         private int lowActivityHours = 12;
-        private int mediumActivityHours = 6;
-        private int highActivityHours = 3;
+        private int mediumActivityHours = 12;
+        private int highActivityHours = 12;
 
         public int getActivityWindowHours() {
             return activityWindowHours;
@@ -478,6 +487,69 @@ public class AssistantProperties {
 
         public void setLimit(int limit) {
             this.limit = limit;
+        }
+    }
+
+    public static class Auth {
+        private boolean enabled = false;
+        private List<AuthUser> users = new ArrayList<>(List.of(
+                new AuthUser("alice", "alice123", false),
+                new AuthUser("bob", "bob123", false),
+                new AuthUser("admin", "admin123", true)));
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public List<AuthUser> getUsers() {
+            return users;
+        }
+
+        public void setUsers(List<AuthUser> users) {
+            this.users = users;
+        }
+    }
+
+    public static class AuthUser {
+        private String userId;
+        private String password;
+        private boolean admin;
+
+        public AuthUser() {
+        }
+
+        public AuthUser(String userId, String password, boolean admin) {
+            this.userId = userId;
+            this.password = password;
+            this.admin = admin;
+        }
+
+        public String getUserId() {
+            return userId;
+        }
+
+        public void setUserId(String userId) {
+            this.userId = userId;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
+        }
+
+        public boolean isAdmin() {
+            return admin;
+        }
+
+        public void setAdmin(boolean admin) {
+            this.admin = admin;
         }
     }
 }

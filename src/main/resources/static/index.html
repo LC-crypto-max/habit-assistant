@@ -72,7 +72,7 @@
       padding: 20px 0;
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: 16px;
+      gap: 12px;
       align-items: center;
     }
 
@@ -122,12 +122,12 @@
       margin: 18px auto 36px;
       display: grid;
       grid-template-columns: 320px minmax(0, 1fr);
-      gap: 16px;
+      gap: 12px;
     }
 
     .stack {
       display: grid;
-      gap: 16px;
+      gap: 10px;
       align-content: start;
     }
 
@@ -135,7 +135,7 @@
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 16px;
+      padding: 12px;
     }
 
     .grid-2 {
@@ -217,7 +217,7 @@
       border-radius: 7px;
       background: #fff;
       color: var(--text);
-      padding: 10px 11px;
+      padding: 8px 10px;
       font: inherit;
       transition: border-color .15s ease, box-shadow .15s ease;
     }
@@ -483,10 +483,22 @@
     <aside class="stack">
       <section class="card">
         <h2>当前用户</h2>
+        <div id="loginBox" class="field">
+          <label for="loginUserId">登录用户</label>
+          <div class="row">
+            <input id="loginUserId" name="loginUserId" value="alice" autocomplete="username" placeholder="alice">
+            <input id="loginPassword" name="loginPassword" type="password" value="" autocomplete="current-password" placeholder="密码">
+          </div>
+          <div class="row">
+            <button id="loginBtn" type="button">登录</button>
+            <button id="logoutBtn" class="ghost" type="button">退出</button>
+          </div>
+          <div id="authStatus" class="hint">本地默认可不登录；公网开启鉴权后按会话用户隔离数据。</div>
+        </div>
         <div class="field">
           <label for="userId">用户 ID</label>
           <input id="userId" name="userId" value="me" autocomplete="off" spellcheck="false" placeholder="例如：alice…">
-          <div class="hint">本地协作阶段通过 userId 区分用户；正式上线建议接入登录态。</div>
+          <div class="hint">开启登录后，后端会优先使用当前会话用户，忽略冒充的 userId。</div>
         </div>
         <button id="loadBtn" class="secondary" type="button">检查推荐</button>
       </section>
@@ -516,6 +528,11 @@
       <section class="card">
         <h2>画像关键词</h2>
         <div id="terms" class="terms"></div>
+      </section>
+
+      <section class="card stack" id="platformSummaryCard">
+        <h2>小红书使用情况</h2>
+        <div id="platformSummary" class="insight-list"></div>
       </section>
 
       <input id="codexQueryKind" type="hidden" value="terminal-app-usage">
@@ -554,7 +571,7 @@
         <div class="card stack">
           <div class="section-title">
             <span class="step-badge">2</span>
-            <h2 style="margin:0">访问了哪些网页</h2>
+            <h2 style="margin:0">应用/网页访问信号</h2>
           </div>
           <div id="visitedPages" class="insight-list"></div>
         </div>
@@ -574,10 +591,11 @@
             <h2 style="margin-bottom:4px">今日推荐</h2>
             <p id="policy" class="subtle"></p>
           </div>
-          <button id="refreshBtn" class="secondary" type="button">刷新列表</button>
+          <button id="refreshBtn" class="secondary" type="button">强制刷新推荐</button>
         </div>
         <div id="recommendations" class="recommendations"></div>
       </section>
+
     </div>
   </main>
 
@@ -667,6 +685,7 @@
     async function request(path, options = {}) {
       const response = await fetch(path, {
         headers: { "Content-Type": "application/json; charset=utf-8", ...(options.headers || {}) },
+        credentials: "same-origin",
         ...options
       });
       if (!response.ok) {
@@ -695,12 +714,42 @@
         button.classList.toggle("active", button.dataset.platformChoice === platform);
       });
       setAgentResult(`已选择 ${platformLabels[platform]}，可以创建采集任务或按关键词生成推荐。`);
+      loadPlatformSummary().catch(showError);
     }
 
     async function loadProfile() {
       const profile = await request(`/api/profile?userId=${encodeURIComponent(userId())}`);
       renderTerms(profile.interestTerms || []);
       return profile;
+    }
+
+    async function loadAuth() {
+      const auth = await request("/api/auth/me");
+      if (auth.authenticated) {
+        $("authStatus").textContent = `已登录：${auth.userId}${auth.admin ? "（管理员）" : ""}`;
+        $("userId").value = auth.userId;
+      } else {
+        $("authStatus").textContent = "当前未登录；本地模式仍可按 userId 测试。";
+      }
+      return auth;
+    }
+
+    async function login() {
+      const response = await request("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          userId: $("loginUserId").value.trim(),
+          password: $("loginPassword").value
+        })
+      });
+      $("userId").value = response.userId || $("userId").value;
+      await loadDashboard(false);
+      await loadAuth();
+    }
+
+    async function logout() {
+      await request("/api/auth/logout", { method: "POST" });
+      await loadAuth();
     }
 
     async function loadPolicy() {
@@ -719,14 +768,32 @@
       return activities;
     }
 
+    async function loadPlatformSummary() {
+      const card = $("platformSummaryCard");
+      if (selectedPlatform() !== "xiaohongshu") {
+        card.hidden = true;
+        return null;
+      }
+      card.hidden = false;
+      const summary = await request(`/api/platforms/xiaohongshu/usage-summary?userId=${encodeURIComponent(userId())}`);
+      renderPlatformUsageSummary(summary);
+      return summary;
+    }
+
     async function loadDashboard(force = false) {
       setStatus(force ? "正在重新生成推荐..." : "正在同步用户画像、访问记录和推荐...");
       const path = force ? "/api/recommendations/refresh" : "/api/recommendations/today";
       const method = force ? "POST" : "GET";
-      const recommendations = await request(`${path}?userId=${encodeURIComponent(userId())}`, { method });
-      renderRecommendations(recommendations || []);
-      await Promise.all([loadProfile(), loadPolicy(), loadRecentActivities()]);
-      setStatus(force ? "推荐已重新生成。" : "已同步最新访问记录和推荐。", "ok");
+      const data = await request(`${path}?userId=${encodeURIComponent(userId())}`, { method });
+      const recommendations = Array.isArray(data) ? data : (data.recommendations || []);
+      renderRecommendations(recommendations, Array.isArray(data) ? "" : data.status);
+      if (!Array.isArray(data) && data.status === "EMPTY") {
+        setStatus(data.message || "暂无推荐，请先创建采集任务并启动 worker。", "warn");
+      }
+      await Promise.all([loadProfile(), loadPolicy(), loadRecentActivities(), loadPlatformSummary()]);
+      if (Array.isArray(data) || data.status !== "EMPTY") {
+        setStatus(force ? "推荐已重新生成。" : (data.message || "已同步最新访问记录和推荐。"), "ok");
+      }
     }
 
     async function searchAndRecommend() {
@@ -793,25 +860,29 @@
     }
 
     function renderVisitedPages(activities) {
-      const rows = activities.filter((item) => item.url || item.title).slice(0, 8);
+      const rows = activities.filter((item) => !isSystemSignal(item) && (item.url || item.title)).slice(0, 8);
       $("visitedPages").innerHTML = rows.length ? rows.map((item) => {
         const href = safeUrl(item.url);
         const title = escapeHtml(item.title || item.url || "未命名访问");
         const link = href ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${title}</a>` : title;
+        const signal = href ? "网页记录" : "应用快照";
         return `
           <article class="item">
             <h3>${link}</h3>
             <div class="meta">
+              <span class="pill">${signal}</span>
               <span class="pill">${escapeHtml(item.platform || "unknown")}</span>
               <span class="pill">${escapeHtml(item.type || "VISIT")}</span>
+              <span class="pill">${escapeHtml(item.confidence || "LOW")}</span>
+              <span class="pill">${escapeHtml(item.dataLevel || "APP_USAGE_SNAPSHOT")}</span>
             </div>
           </article>
         `;
-      }).join("") : `<div class="empty">暂无访问记录。创建采集任务并授权 worker 后会出现在这里。</div>`;
+      }).join("") : `<div class="empty">暂无应用或网页信号。创建采集任务并授权 worker 后会出现在这里。</div>`;
     }
 
     function renderContentSummaries(activities) {
-      const rows = activities.filter((item) => item.text || item.title || (item.tags && item.tags.length)).slice(0, 6);
+      const rows = activities.filter((item) => !isSystemSignal(item) && (item.text || item.title || (item.tags && item.tags.length))).slice(0, 6);
       $("contentSummaries").innerHTML = rows.length ? rows.map((item) => `
         <article class="item">
           <h3>${escapeHtml(item.title || item.platform || "访问摘要")}</h3>
@@ -823,9 +894,12 @@
       `).join("") : `<div class="empty">暂无内容摘要。授权采集后会展示标题、摘要和标签。</div>`;
     }
 
-    function renderRecommendations(items) {
+    function renderRecommendations(items, status = "") {
       if (!items.length) {
-        $("recommendations").innerHTML = `<div class="empty">暂无推荐，启动 worker 或按关键词生成推荐试试。</div>`;
+        const message = status === "EMPTY"
+          ? "暂无推荐，请先创建采集任务并启动 worker。"
+          : "暂无推荐，启动 worker 或按关键词生成推荐试试。";
+        $("recommendations").innerHTML = `<div class="empty">${message}</div>`;
         return;
       }
       $("recommendations").innerHTML = items.map((item) => {
@@ -851,9 +925,73 @@
       }).join("");
     }
 
+    function renderSignalGroup(title, confidence, items) {
+      if (!items || !items.length) {
+        return `
+          <article class="item">
+            <h3>${escapeHtml(title)}</h3>
+            <div class="meta"><span class="pill">${escapeHtml(confidence)}</span><span>暂无信号</span></div>
+          </article>
+        `;
+      }
+      const rows = items.slice(0, 4).map((item) => {
+        const href = safeUrl(item.url);
+        const text = escapeHtml(item.title || item.url || item.summary || "未命名信号");
+        const link = href ? `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>` : text;
+        return `
+          <div class="meta" style="align-items:flex-start">
+            <span class="pill">${escapeHtml(item.confidence || confidence)}</span>
+            <span class="pill">${escapeHtml(item.dataLevel || item.source || "")}</span>
+            <span>${link}</span>
+          </div>
+        `;
+      }).join("");
+      return `
+        <article class="item">
+          <h3>${escapeHtml(title)}</h3>
+          ${rows}
+        </article>
+      `;
+    }
+
+    function renderPlatformUsageSummary(summary) {
+      if (!summary) {
+        $("platformSummary").innerHTML = `<div class="empty">暂无平台摘要。</div>`;
+        return;
+      }
+      const windowCount = (summary.windowsAppSignals || []).length;
+      const historyCount = (summary.browserHistorySignals || []).length;
+      const pageCount = (summary.pageContentSignals || []).length;
+      const canRecommend = historyCount > 0 || pageCount > 0;
+      const emptyHint = !canRecommend && windowCount > 0
+        ? `<div class="empty">暂未检测到小红书浏览器历史或页面内容，当前仅有窗口快照。</div>`
+        : "";
+      $("platformSummary").innerHTML = `
+        <article class="item">
+          <h3>${escapeHtml(summary.summary || "小红书使用摘要")}</h3>
+          <div class="meta">
+            <span class="pill">总体置信度 ${escapeHtml(summary.overallConfidence || "NONE")}</span>
+            <span class="pill">窗口 ${windowCount}</span>
+            <span class="pill">历史 ${historyCount}</span>
+            <span class="pill">页面 ${pageCount}</span>
+            <span class="pill">${canRecommend ? "可用于推荐" : "仅作辅助"}</span>
+          </div>
+        </article>
+        ${emptyHint}
+        ${renderSignalGroup("浏览器历史", "MEDIUM", summary.browserHistorySignals || [])}
+        ${renderSignalGroup("页面内容", "HIGH", summary.pageContentSignals || [])}
+        ${renderSignalGroup("窗口快照", "LOW", summary.windowsAppSignals || [])}
+      `;
+    }
+
+    function isSystemSignal(item) {
+      const text = `${item.platform || ""} ${item.title || ""} ${item.text || ""}`.toLowerCase();
+      return ["windowsterminal", "textinputhost", "systemsettings", "powershell", "cmd.exe"].some((name) => text.includes(name));
+    }
+
     function showError(error) {
       const message = friendlyError(error);
-      setStatus(message, "error");
+      setStatus(message.includes("HTTP 500") ? "推荐接口暂时不可用，请检查后端日志。" : message, "error");
       setAgentResult(message, "error");
       console.error(error);
     }
@@ -862,11 +1000,13 @@
       button.addEventListener("click", () => selectPlatform(button.dataset.platformChoice));
     });
     $("loadBtn").addEventListener("click", () => withBusy($("loadBtn"), "检查中...", () => loadDashboard(false)).catch(showError));
-    $("refreshBtn").addEventListener("click", () => withBusy($("refreshBtn"), "刷新中...", () => loadDashboard(false)).catch(showError));
+    $("refreshBtn").addEventListener("click", () => withBusy($("refreshBtn"), "刷新中...", () => loadDashboard(true)).catch(showError));
     $("forceBtn").addEventListener("click", () => withBusy($("forceBtn"), "重算中...", () => loadDashboard(true)).catch(showError));
     $("searchBtn").addEventListener("click", () => withBusy($("searchBtn"), "生成中...", searchAndRecommend).catch(showError));
     $("agentCreateQueryBtn").addEventListener("click", () => withBusy($("agentCreateQueryBtn"), "创建中...", createAgentQuery).catch(showError));
     $("agentStartWorkerBtn").addEventListener("click", () => withBusy($("agentStartWorkerBtn"), "启动中...", startLocalWorker).catch(showError));
+    $("loginBtn").addEventListener("click", () => withBusy($("loginBtn"), "登录中...", login).catch(showError));
+    $("logoutBtn").addEventListener("click", () => withBusy($("logoutBtn"), "退出中...", logout).catch(showError));
     $("userId").addEventListener("change", () => loadDashboard(false).catch(showError));
     $("recommendations").addEventListener("click", (event) => {
       const button = event.target.closest("[data-feedback-id]");
@@ -875,6 +1015,7 @@
     });
 
     selectPlatform("xiaohongshu");
+    loadAuth().catch(() => {});
     loadDashboard(false).catch(showError);
   </script>
 </body>
