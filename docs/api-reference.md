@@ -38,6 +38,62 @@ Response:
   "topTags": [],
   "recentActivities": [],
   "cached": false
+} 
+```
+
+## Behavior Event Batch Compatibility
+
+`POST /api/v1/behavior-events/batch` accepts standard behavior event JSON with:
+
+- Required fields: `events[].userId`, `events[].platform`, and event type.
+- Event type can be sent as `type` or `eventType`.
+- Event type values are case-insensitive and may use `-` instead of `_`, for example `visit` or `app-usage`.
+- `events[].tags` accepts a JSON string array.
+- `events[].rawEvidence` accepts a JSON object and is stored as sanitized JSON text.
+- `events[].occurredAt` accepts ISO-8601 local or offset datetime strings, for example `2026-06-12T10:00:00` or `2026-06-12T10:00:00+08:00`; `createdAt` is accepted as an alias.
+- Standard worker events use `eventType` and `interestCategory`; legacy `type` and `contentCategory` are still accepted.
+
+Standard event example:
+
+```json
+{
+  "events": [
+    {
+      "userId": "me",
+      "eventType": "VISIT",
+      "platform": "github",
+      "source": "codex-cli-analysis",
+      "url": "https://github.com/openai/codex",
+      "title": "OpenAI Codex repository",
+      "summary": "Public GitHub repository.",
+      "tags": ["github", "codex"],
+      "contentType": "repository-or-code-page",
+      "interestCategory": "developer-tooling",
+      "confidence": "HIGH",
+      "dataLevel": "PAGE_VISIBLE_CONTENT",
+      "detectionReason": "public_url_enrichment",
+      "rawEvidence": {
+        "domain": "github.com",
+        "adapter": "agent-reach",
+        "adapterMode": "mock"
+      },
+      "occurredAt": "2026-06-12T10:00:00"
+    }
+  ]
+}
+```
+
+Error responses include the stable JSON shape below while keeping legacy `error` and `fields` members:
+
+```json
+{
+  "success": false,
+  "message": "请求字段校验失败",
+  "path": "/api/v1/behavior-events/batch",
+  "error": "VALIDATION_ERROR",
+  "fields": {
+    "events[0].userId": "must not be blank"
+  }
 }
 ```
 

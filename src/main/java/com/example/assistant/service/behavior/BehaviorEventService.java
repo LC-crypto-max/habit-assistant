@@ -141,6 +141,7 @@ public class BehaviorEventService {
             raw.putAll(event.rawEvidence());
         }
         putIfPresent(raw, "contentType", event.contentType());
+        putIfPresent(raw, "interestCategory", event.contentCategory());
         putIfPresent(raw, "contentCategory", event.contentCategory());
         putIfPresent(raw, "intent", event.intent());
         putIfPresent(raw, "summaryForProfile", event.summaryForProfile());

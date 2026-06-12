@@ -62,3 +62,44 @@ The endpoint is intentionally designed to receive only non-private interest
 signals: title, public URL, public author, public summary, task intent, and tags.
 Local scripts or skills should strip cookies, tokens, browser history internals,
 private comments, and raw account data before calling this API.
+
+## Agent Reach Adapter
+
+Worker-side public URL enrichment uses `scripts/agent_reach_adapter.py`.
+
+Public entry point:
+
+```python
+enrich_public_url(item: dict) -> dict
+```
+
+Phase 1 runs in mock/dry-run mode and does not perform network access. It prints
+the command that a future real adapter can execute:
+
+```text
+[AgentReach] 即将执行命令: agent-reach read --url "<url>" --platform "<platform>" --dry-run
+[AgentReach] 返回结果: {...}
+```
+
+Routing:
+
+- `bilibili` -> `read_bilibili(url)`
+- `youtube` -> `read_youtube(url)`
+- `xiaohongshu` -> `read_xiaohongshu_public(url)`
+- `github` -> `read_github(url)`
+- `web` -> `read_web_page(url)`
+
+The adapter returns normalized, non-private behavior data with
+`source=agent-reach-enrichment`, `dataLevel=PAGE_VISIBLE_CONTENT`, and
+`confidence=HIGH`. Raw evidence is sanitized and limited to safe metadata such as
+domain, visit count, adapter mode, and the dry-run command string.
+
+Verbose worker tracing:
+
+```powershell
+py -3 scripts/codex_query_worker.py --once --yes --use-codex-cli --direct-behavior-batch --verbose
+```
+
+`--verbose` prints the current task, collected browser/public URL items, Agent
+Reach dry-run command and output, Codex CLI command/input/output, final
+`behavior_event` JSON, and the backend POST URL plus response.

@@ -21,6 +21,8 @@ public class SchemaCompatibilityInitializer {
                 return;
             }
             statement.execute("alter table if exists user_activity alter column type varchar(32)");
+            statement.execute("alter table if exists user_activity alter column text clob");
+            statement.execute("alter table if exists user_activity alter column raw_evidence clob");
         } catch (Exception ignored) {
             // Best-effort compatibility migration for old local H2 databases.
         }

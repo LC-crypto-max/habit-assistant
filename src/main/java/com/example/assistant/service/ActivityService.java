@@ -21,6 +21,16 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ActivityService {
 
+    private static final int USER_ID_LIMIT = 120;
+    private static final int PLATFORM_LIMIT = 120;
+    private static final int TITLE_LIMIT = 512;
+    private static final int URL_LIMIT = 1024;
+    private static final int TEXT_LIMIT = 8000;
+    private static final int TAG_LIMIT = 80;
+    private static final int TAG_COUNT_LIMIT = 30;
+    private static final int METADATA_LIMIT = 160;
+    private static final int RAW_EVIDENCE_LIMIT = 12000;
+
     private final AssistantProperties properties;
     private final UserActivityRepository activityRepository;
     private final ProfileService profileService;
@@ -41,19 +51,19 @@ public class ActivityService {
         LocalDateTime occurredAt = request.occurredAt() == null ? LocalDateTime.now() : request.occurredAt();
         String userId = userContext.resolve(request.userId());
         UserActivity activity = new UserActivity(
-                userId,
+                limit(userId, USER_ID_LIMIT),
                 request.type(),
-                request.platform(),
-                request.title(),
-                request.url(),
-                request.text(),
+                limit(request.platform(), PLATFORM_LIMIT),
+                limit(request.title(), TITLE_LIMIT),
+                limit(request.url(), URL_LIMIT),
+                limit(request.text(), TEXT_LIMIT),
                 occurredAt,
-                request.tags(),
-                confidence(request),
-                dataLevel(request),
-                source(request),
-                detectionReason(request),
-                matchedKeyword(request),
+                safeTags(request.tags()),
+                limit(confidence(request), METADATA_LIMIT),
+                limit(dataLevel(request), METADATA_LIMIT),
+                limit(source(request), METADATA_LIMIT),
+                limit(detectionReason(request), METADATA_LIMIT),
+                limit(matchedKeyword(request), METADATA_LIMIT),
                 rawEvidenceJson(request.rawEvidence()));
         UserActivity saved = activityRepository.save(activity);
         profileService.learnFrom(saved);
@@ -203,7 +213,10 @@ public class ActivityService {
         safe.put("visitCount", visitCount(rawEvidence.get("visitCount")));
         safe.put("adapter", limit(rawEvidence.get("adapter"), 80));
         safe.put("adapterMode", limit(rawEvidence.get("adapterMode"), 80));
+        safe.put("agentReachCommand", limit(rawEvidence.get("agentReachCommand"), 500));
+        safe.put("originalSource", limit(rawEvidence.get("originalSource"), 120));
         safe.put("contentType", limit(rawEvidence.get("contentType"), 80));
+        safe.put("interestCategory", limit(rawEvidence.get("interestCategory"), 120));
         safe.put("contentCategory", limit(rawEvidence.get("contentCategory"), 120));
         safe.put("intent", limit(rawEvidence.get("intent"), 120));
         safe.put("summaryForProfile", limit(rawEvidence.get("summaryForProfile"), 420));
@@ -216,7 +229,7 @@ public class ActivityService {
                     .toList());
         }
         try {
-            return objectMapper.writeValueAsString(safe);
+            return limit(objectMapper.writeValueAsString(safe), RAW_EVIDENCE_LIMIT);
         } catch (JsonProcessingException e) {
             return null;
         }
@@ -251,6 +264,18 @@ public class ActivityService {
         } catch (RuntimeException e) {
             return 0;
         }
+    }
+
+    private List<String> safeTags(List<String> tags) {
+        if (tags == null || tags.isEmpty()) {
+            return List.of();
+        }
+        return tags.stream()
+                .map(value -> limit(value, TAG_LIMIT))
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .limit(TAG_COUNT_LIMIT)
+                .toList();
     }
 
     private boolean hasUrl(ActivityRequest request) {

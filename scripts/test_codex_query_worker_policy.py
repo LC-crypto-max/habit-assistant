@@ -1,9 +1,11 @@
 import importlib.util
+import io
 import json
 import pathlib
 import re
 import sys
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 
@@ -97,6 +99,7 @@ class CodexCliAnalysisTest(unittest.TestCase):
             print_codex_output=False,
             codex_timeout=5,
             direct_behavior_batch=False,
+            verbose=False,
         )
 
     def raw_item(self):
@@ -269,6 +272,19 @@ class CodexCliAnalysisTest(unittest.TestCase):
 
         self.assertEqual(item["platform"], "xiaohongshu")
 
+    def test_github_url_is_recognized(self):
+        item = worker.sanitize_item({
+            "platform": "web",
+            "source": "agent-reach-enrichment",
+            "title": "OpenAI Codex repository",
+            "url": "https://github.com/openai/codex",
+            "tags": ["github"],
+            "confidence": "HIGH",
+            "dataLevel": "PAGE_VISIBLE_CONTENT",
+        })
+
+        self.assertEqual(item["platform"], "github")
+
     def test_chrome_or_edge_is_not_xiaohongshu_without_keyword(self):
         chrome = worker.sanitize_item({
             "platform": "browser",
@@ -327,11 +343,72 @@ class CodexCliAnalysisTest(unittest.TestCase):
         normalized = worker.normalize_result_item(items[0])
 
         self.assertEqual(normalized["platform"], "bilibili")
-        self.assertEqual(normalized["source"], "agent-reach-mock")
+        self.assertEqual(normalized["source"], "agent-reach-enrichment")
+        self.assertEqual(normalized["eventType"], "WATCH")
+        self.assertEqual(normalized["type"], "WATCH")
         self.assertEqual(normalized["contentType"], "video")
+        self.assertEqual(normalized["interestCategory"], "video")
         self.assertEqual(normalized["detectionReason"], "public_url_enrichment")
         self.assertIn("Java后端", normalized["tags"])
         self.assertEqual(normalized["rawEvidence"]["adapter"], "agent-reach")
+
+    def test_codex_analysis_items_use_standard_behavior_event_fields(self):
+        output = json.dumps({
+            "items": [{
+                "userId": "me",
+                "platform": "web",
+                "eventType": "VISIT",
+                "source": "agent-reach-enrichment",
+                "title": "OpenAI Codex repository",
+                "url": "https://github.com/openai/codex",
+                "summary": "Public GitHub repository.",
+                "tags": ["github", "codex"],
+                "contentType": "repository-or-code-page",
+                "interestCategory": "developer-tooling",
+                "confidence": "HIGH",
+                "dataLevel": "PAGE_VISIBLE_CONTENT",
+                "detectionReason": "public_url_enrichment",
+                "rawEvidence": {"domain": "github.com", "adapter": "agent-reach"},
+            }]
+        }, ensure_ascii=False)
+        with patch.object(worker, "find_codex_cli", return_value="codex"), \
+                patch.object(worker, "run_codex_cli", return_value=output):
+            analyzed = worker.analyze_with_codex_cli({"platform": "github"}, self.raw_url_item(), self.cfg())
+
+        item = analyzed[0]
+        self.assertEqual(item["eventType"], "VISIT")
+        self.assertEqual(item["type"], "VISIT")
+        self.assertEqual(item["source"], "codex-cli-analysis")
+        self.assertEqual(item["platform"], "github")
+        self.assertEqual(item["interestCategory"], "developer-tooling")
+        self.assertEqual(item["contentCategory"], "developer-tooling")
+        self.assertEqual(item["rawEvidence"]["originalSource"], "agent-reach-enrichment")
+
+    def test_verbose_behavior_batch_logs_url_payload_and_response(self):
+        item = {
+            "userId": "me",
+            "platform": "bilibili",
+            "source": "agent-reach-enrichment",
+            "type": "WATCH",
+            "title": "Spring Boot Redis video",
+            "url": "https://www.bilibili.com/video/BV1demo",
+            "summary": "Public video summary",
+            "tags": ["bilibili"],
+            "confidence": "HIGH",
+            "dataLevel": "PAGE_VISIBLE_CONTENT",
+            "rawEvidence": {"domain": "bilibili.com", "visitCount": 2},
+        }
+
+        output = io.StringIO()
+        with patch.object(worker, "post_json", return_value={"imported": 1}) as post_json, \
+                redirect_stdout(output):
+            response = worker.post_behavior_batch("http://localhost:8080", [item], verbose=True)
+
+        self.assertEqual(response["imported"], 1)
+        post_json.assert_called_once()
+        self.assertIn("Backend POST URL: http://localhost:8080/api/v1/behavior-events/batch", output.getvalue())
+        self.assertIn("behavior_event JSON", output.getvalue())
+        self.assertIn("Backend POST response", output.getvalue())
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ public class UserActivity {
     @Column(length = 1024)
     private String url;
 
-    @Column(length = 2000)
+    @Column(columnDefinition = "TEXT")
     private String text;
 
     private LocalDateTime occurredAt;
@@ -48,7 +48,7 @@ public class UserActivity {
 
     private String matchedKeyword;
 
-    @Column(length = 4000)
+    @Column(columnDefinition = "TEXT")
     private String rawEvidence;
 
     @ElementCollection

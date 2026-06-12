@@ -1,15 +1,19 @@
 package com.example.assistant.dto;
 
 import com.example.assistant.model.ActivityType;
+import com.example.assistant.support.IsoLocalDateTimeDeserializer;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
 public record BehaviorEventRequest(
-        String userId,
+        @NotBlank String userId,
         @NotBlank String platform,
-        ActivityType type,
+        @JsonAlias("eventType") @NotNull(message = "eventType is required") ActivityType type,
         String source,
         String externalId,
         String title,
@@ -17,7 +21,7 @@ public record BehaviorEventRequest(
         String author,
         String summary,
         String text,
-        LocalDateTime occurredAt,
+        @JsonAlias("createdAt") @JsonDeserialize(using = IsoLocalDateTimeDeserializer.class) LocalDateTime occurredAt,
         List<String> tags,
         String confidence,
         String dataLevel,
@@ -25,7 +29,7 @@ public record BehaviorEventRequest(
         String matchedKeyword,
         List<String> interestTags,
         String contentType,
-        String contentCategory,
+        @JsonAlias("interestCategory") String contentCategory,
         String intent,
         String summaryForProfile,
         List<String> recommendationHints,

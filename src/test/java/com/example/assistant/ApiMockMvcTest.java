@@ -775,4 +775,67 @@ class ApiMockMvcTest {
                 .andExpect(jsonPath("$.status").value("EMPTY"))
                 .andExpect(jsonPath("$.recommendations", hasSize(0)));
     }
+
+    @Test
+    @Order(99)
+    void behaviorEventBatchAcceptsStandardEventJsonShape() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "standard-user",
+                                      "platform": "browser",
+                                      "eventType": "visit",
+                                      "title": "Standard behavior event",
+                                      "url": "https://example.com/standard",
+                                      "summary": "A standard event with JSON arrays and objects.",
+                                      "tags": ["browser-history", "standard-json"],
+                                      "contentType": "article",
+                                      "interestCategory": "developer-tooling",
+                                      "occurredAt": "2026-06-12T10:00:00+08:00",
+                                      "rawEvidence": {
+                                        "browser": "edge",
+                                        "domain": "example.com",
+                                        "visitCount": 2,
+                                        "windowTitle": "Standard behavior event"
+                                      }
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(1))
+                .andExpect(jsonPath("$.skipped").value(0))
+                .andExpect(jsonPath("$.activities[0].type").value("VISIT"))
+                .andExpect(jsonPath("$.activities[0].occurredAt").value("2026-06-12T10:00:00"))
+                .andExpect(jsonPath("$.activities[0].tags", hasSize(greaterThanOrEqualTo(3))))
+                .andExpect(jsonPath("$.activities[0].rawEvidence.domain").value("example.com"))
+                .andExpect(jsonPath("$.activities[0].rawEvidence.interestCategory").value("developer-tooling"));
+    }
+
+    @Test
+    @Order(100)
+    void behaviorEventBatchValidationUsesStableErrorShape() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "title": "Missing required fields"
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value("请求字段校验失败"))
+                .andExpect(jsonPath("$.path").value("/api/v1/behavior-events/batch"))
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fields['events[0].userId']").exists())
+                .andExpect(jsonPath("$.fields['events[0].platform']").exists())
+                .andExpect(jsonPath("$.fields['events[0].type']").value("eventType is required"));
+    }
 }

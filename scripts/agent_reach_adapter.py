@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import urllib.parse
 from datetime import datetime
+import json
 from typing import Any
 
 
@@ -95,6 +96,8 @@ def enrich_public_url(item: dict[str, Any]) -> dict[str, Any]:
         return read_youtube(item, platform)
     if platform == "xiaohongshu":
         return read_xiaohongshu_public(item, platform)
+    if platform == "github":
+        return read_github(item, platform)
     return read_web_page(item, platform)
 
 
@@ -110,6 +113,10 @@ def read_xiaohongshu_public(item: dict[str, Any], platform: str = "xiaohongshu")
     return build_mock_enrichment(item, platform, "note", "Xiaohongshu public note metadata placeholder")
 
 
+def read_github(item: dict[str, Any], platform: str = "github") -> dict[str, Any]:
+    return build_mock_enrichment(item, platform, "repository-or-code-page", "GitHub public page metadata placeholder")
+
+
 def read_web_page(item: dict[str, Any], platform: str = "web") -> dict[str, Any]:
     return build_mock_enrichment(item, platform, content_type_for_platform(platform, str(item.get("url") or "")),
                                  "Public web page metadata placeholder")
@@ -123,10 +130,12 @@ def build_mock_enrichment(item: dict[str, Any], platform: str, content_type: str
     visit_count = original_raw.get("visitCount") or item.get("visitCount") or 0
     tags = default_tags(platform, content_type, title, url)
     occurred_at = sanitize_text(item.get("occurredAt") or datetime.now().replace(microsecond=0).isoformat(), 40)
-    return {
+    command = f'agent-reach read --url "{url}" --platform "{platform}" --dry-run'
+    print(f"[AgentReach] 即将执行命令: {command}")
+    result = {
         "userId": sanitize_text(item.get("userId") or "", 120),
         "platform": platform,
-        "source": "agent-reach-mock",
+        "source": "agent-reach-enrichment",
         "type": "WATCH" if content_type == "video" else "VISIT",
         "externalId": sanitize_text(item.get("externalId") or "", 160),
         "title": title,
@@ -139,8 +148,8 @@ def build_mock_enrichment(item: dict[str, Any], platform: str, content_type: str
         "intent": "public-url-enrichment",
         "summaryForProfile": f"用户访问过 {platform} 的公开{content_type}内容：{title}",
         "recommendationHints": [f"继续推荐与 {title[:40]} 相关的公开内容"],
-        "confidence": "MEDIUM",
-        "dataLevel": "PUBLIC_URL",
+        "confidence": "HIGH",
+        "dataLevel": "PAGE_VISIBLE_CONTENT",
         "detectionReason": "public_url_enrichment",
         "matchedKeyword": domain,
         "occurredAt": occurred_at,
@@ -152,11 +161,15 @@ def build_mock_enrichment(item: dict[str, Any], platform: str, content_type: str
             "visitCount": safe_int(visit_count),
             "adapter": "agent-reach",
             "adapterMode": "mock",
+            "agentReachCommand": command,
+            "originalSource": sanitize_text(item.get("source") or "", 120),
             "contentType": content_type,
             "contentCategory": content_type,
             "intent": "public-url-enrichment",
         },
     }
+    print(f"[AgentReach] 返回结果: {json.dumps(result, ensure_ascii=False)}")
+    return result
 
 
 def safe_int(value: Any) -> int:

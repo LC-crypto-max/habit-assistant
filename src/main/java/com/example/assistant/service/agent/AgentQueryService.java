@@ -129,7 +129,7 @@ public class AgentQueryService {
         return """
                 You are collecting public, non-private interest data for Habit Assistant.
                 Return JSON only, using this shape:
-                {"items":[{"platform":"%s","type":"VISIT","externalId":"","title":"","url":"","author":"","summary":"","tags":[]}]}
+                {"items":[{"platform":"%s","eventType":"VISIT","source":"codex-cli-analysis","externalId":"","title":"","url":"","author":"","summary":"","tags":[],"contentType":"","interestCategory":"","confidence":"HIGH","dataLevel":"PAGE_VISIBLE_CONTENT","detectionReason":"public_url_enrichment","rawEvidence":{},"occurredAt":""}]}
 
                 Rules:
                 - Return only public metadata fields and privacy-safe summaries.

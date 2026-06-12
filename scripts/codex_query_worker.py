@@ -157,6 +157,7 @@ ALLOWED_ITEM_FIELDS = {
     "userId",
     "platform",
     "source",
+    "eventType",
     "type",
     "externalId",
     "title",
@@ -172,6 +173,7 @@ ALLOWED_ITEM_FIELDS = {
     "interestLabels",
     "recommendationHints",
     "contentType",
+    "interestCategory",
     "contentCategory",
     "intent",
     "summaryForProfile",
@@ -186,6 +188,7 @@ ALLOWED_PLATFORMS = {
     "browser",
     "desktop-app",
     "web",
+    "github",
 }
 ALLOWED_TYPES = {"VISIT", "WATCH", "SEARCH", "FAVORITE", "APP_USAGE"}
 ALLOWED_CONFIDENCE = {"LOW", "MEDIUM", "HIGH"}
@@ -239,6 +242,7 @@ class WorkerConfig:
     print_codex_output: bool
     codex_timeout: int
     direct_behavior_batch: bool
+    verbose: bool
 
 
 def now_iso() -> str:
@@ -373,6 +377,20 @@ def split_command(command: str) -> list[str]:
     return shlex.split(command, posix=os.name != "nt")
 
 
+def verbose_log(enabled: bool, message: str) -> None:
+    if enabled:
+        print(message)
+
+
+def verbose_json(enabled: bool, title: str, value: Any) -> None:
+    if not enabled:
+        return
+    print(f"\n{title}")
+    print("=" * 72)
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+    print("=" * 72)
+
+
 def post_json(url: str, payload: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
@@ -407,9 +425,14 @@ def complete_task(base_url: str, task_id: str, payload: dict[str, Any]) -> dict[
     return post_json(base_url.rstrip("/") + f"/api/agent/queries/{task_id}/result", payload)
 
 
-def post_behavior_batch(base_url: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+def post_behavior_batch(base_url: str, items: list[dict[str, Any]], verbose: bool = False) -> dict[str, Any]:
+    url = base_url.rstrip("/") + "/api/v1/behavior-events/batch"
     payload = {"events": [normalize_result_item(item) for item in items]}
-    return post_json(base_url.rstrip("/") + "/api/v1/behavior-events/batch", payload)
+    verbose_log(verbose, f"\nBackend POST URL: {url}")
+    verbose_json(verbose, "behavior_event JSON", payload)
+    response = post_json(url, payload)
+    verbose_json(verbose, "Backend POST response", response)
+    return response
 
 
 def print_task(task: dict[str, Any]) -> None:
@@ -482,9 +505,9 @@ def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) ->
         '  "items": [\n'
         "    {\n"
         '      "userId": "me",\n'
-        '      "platform": "xiaohongshu | youtube | bilibili | wechat | browser | desktop-app | web",\n'
-        '      "source": "visible-window | browser-history | page-visit | local-notes | public-url | codex-cli-analysis",\n'
-        '      "type": "VISIT | WATCH | SEARCH | FAVORITE | APP_USAGE",\n'
+        '      "platform": "xiaohongshu | youtube | bilibili | github | wechat | browser | desktop-app | web",\n'
+        '      "source": "visible-window | browser-history | page-visit | local-notes | public-url | agent-reach-enrichment | codex-cli-analysis",\n'
+        '      "eventType": "VISIT | WATCH | SEARCH | FAVORITE | APP_USAGE",\n'
         '      "externalId": "",\n'
         '      "title": "",\n'
         '      "url": "",\n'
@@ -498,7 +521,7 @@ def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) ->
         '      "interestTags": [],\n'
         '      "interestLabels": [],\n'
         '      "contentType": "video | note | article | web-page",\n'
-        '      "contentCategory": "",\n'
+        '      "interestCategory": "",\n'
         '      "intent": "",\n'
         '      "summaryForProfile": "",\n'
         '      "recommendationHints": [],\n'
@@ -514,7 +537,13 @@ def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) ->
     )
 
 
-def run_codex_cli(prompt: str, command: str, timeout: int) -> str:
+def run_codex_cli(prompt: str, command: str, timeout: int, verbose: bool = False) -> str:
+    verbose_log(verbose, f"\nCodex CLI command: {command}")
+    verbose_log(verbose, "Codex CLI input follows:")
+    if verbose:
+        print("=" * 72)
+        print(prompt)
+        print("=" * 72)
     completed = subprocess.run(
         split_command(command),
         input=prompt,
@@ -527,16 +556,26 @@ def run_codex_cli(prompt: str, command: str, timeout: int) -> str:
     )
     if completed.returncode != 0:
         raise RuntimeError(sanitize(completed.stderr or f"Codex CLI exited with {completed.returncode}", 1000))
-    return completed.stdout or completed.stderr or ""
+    output = completed.stdout or completed.stderr or ""
+    if verbose:
+        print("\nCodex CLI output")
+        print("=" * 72)
+        print(output)
+        print("=" * 72)
+    return output
 
 
 def analyze_with_codex_cli(task: dict[str, Any], raw_items: list[dict[str, Any]], cfg: WorkerConfig) -> list[dict[str, Any]]:
     command = cfg.codex_command or "codex"
     if not find_codex_cli(command):
+        verbose_log(cfg.verbose, f"\nCodex CLI command: {command}")
         print(f"Warning: Codex CLI not found for command '{command}'. Falling back to raw_items.", file=sys.stderr)
         return raw_items
 
     prompt = build_codex_prompt(task, raw_items)
+    if cfg.verbose:
+        verbose_json(True, "Codex raw_items", raw_items)
+
     if cfg.print_codex_prompt:
         print("\nCodex prompt")
         print("=" * 72)
@@ -544,7 +583,7 @@ def analyze_with_codex_cli(task: dict[str, Any], raw_items: list[dict[str, Any]]
         print("=" * 72)
 
     try:
-        output = run_codex_cli(prompt, command, cfg.codex_timeout)
+        output = run_codex_cli(prompt, command, cfg.codex_timeout, verbose=cfg.verbose)
     except subprocess.TimeoutExpired:
         print("Warning: Codex CLI timed out. Falling back to raw_items.", file=sys.stderr)
         return raw_items
@@ -560,13 +599,15 @@ def analyze_with_codex_cli(task: dict[str, Any], raw_items: list[dict[str, Any]]
 
     try:
         decoded = parse_codex_json_output(output)
-        analyzed = validate_codex_items(decoded)
+        analyzed = mark_codex_analysis_items(validate_codex_items(decoded))
         if has_invented_url(raw_items, analyzed):
             raise ValueError("Codex output invented URL for empty raw_items")
     except Exception as exc:
         print(f"Warning: Codex output rejected: {sanitize(exc, 400)}. Falling back to raw_items.", file=sys.stderr)
         return raw_items
-    return analyzed or raw_items
+    final_items = analyzed or raw_items
+    verbose_json(cfg.verbose, "Codex analyzed items", final_items)
+    return final_items
 
 
 def parse_codex_json_output(output: str) -> dict[str, Any]:
@@ -617,6 +658,22 @@ def validate_codex_items(decoded: dict[str, Any]) -> list[dict[str, Any]]:
     return sanitized
 
 
+def mark_codex_analysis_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    marked: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        updated = dict(item)
+        previous_source = sanitize(updated.get("source") or "", 120)
+        raw_evidence = dict(updated.get("rawEvidence") or {}) if isinstance(updated.get("rawEvidence"), dict) else {}
+        if previous_source and not raw_evidence.get("originalSource"):
+            raw_evidence["originalSource"] = previous_source
+        updated["source"] = "codex-cli-analysis"
+        updated["rawEvidence"] = raw_evidence
+        marked.append(updated)
+    return marked
+
+
 def has_invented_url(raw_items: list[dict[str, Any]], analyzed_items: list[dict[str, Any]]) -> bool:
     raw_urls = [str(item.get("url") or "").strip() for item in raw_items if isinstance(item, dict)]
     if any(raw_urls):
@@ -635,8 +692,11 @@ def sanitize_raw_evidence(value: Any) -> dict[str, Any]:
         "visitCount": 0,
         "adapter": sanitize(value.get("adapter") or "", 80),
         "adapterMode": sanitize(value.get("adapterMode") or "", 80),
+        "agentReachCommand": sanitize(value.get("agentReachCommand") or "", 500),
+        "originalSource": sanitize(value.get("originalSource") or "", 120),
         "contentType": sanitize(value.get("contentType") or "", 80),
-        "contentCategory": sanitize(value.get("contentCategory") or "", 120),
+        "interestCategory": sanitize(value.get("interestCategory") or value.get("contentCategory") or "", 120),
+        "contentCategory": sanitize(value.get("contentCategory") or value.get("interestCategory") or "", 120),
         "intent": sanitize(value.get("intent") or "", 120),
     }
     try:
@@ -745,19 +805,28 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
     if raw_evidence:
         filtered = {**filtered, "rawEvidence": raw_evidence}
     content_type = sanitize(filtered.get("contentType") or raw_evidence.get("contentType") or "", 80)
-    content_category = sanitize(filtered.get("contentCategory") or raw_evidence.get("contentCategory") or "", 120)
+    interest_category = sanitize(
+        filtered.get("interestCategory")
+        or filtered.get("contentCategory")
+        or raw_evidence.get("interestCategory")
+        or raw_evidence.get("contentCategory")
+        or "",
+        120,
+    )
+    content_category = interest_category
     item_intent = sanitize(filtered.get("intent") or raw_evidence.get("intent") or "", 120)
     summary_for_profile = sanitize(filtered.get("summaryForProfile") or "", SUMMARY_TEXT_LIMIT)
     if content_type:
         raw_evidence["contentType"] = content_type
     if content_category:
+        raw_evidence["interestCategory"] = content_category
         raw_evidence["contentCategory"] = content_category
     if item_intent:
         raw_evidence["intent"] = item_intent
 
     source = normalize_source(filtered.get("source"), filtered)
     platform = normalize_platform(filtered.get("platform"), filtered)
-    event_type = normalize_event_type(filtered.get("type"), filtered)
+    event_type = normalize_event_type(filtered.get("eventType") or filtered.get("type"), filtered)
     confidence = normalize_choice(filtered.get("confidence"), ALLOWED_CONFIDENCE, default_confidence(filtered))
     data_level = normalize_choice(filtered.get("dataLevel"), ALLOWED_DATA_LEVELS, default_data_level(filtered))
     detection_reason = normalize_choice(
@@ -773,6 +842,7 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
         "userId": sanitize(filtered.get("userId") or "", 120),
         "platform": platform,
         "source": source,
+        "eventType": event_type,
         "type": event_type,
         "externalId": sanitize(filtered.get("externalId") or "", 160),
         "title": sanitize(filtered.get("title") or "", 300),
@@ -788,6 +858,7 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
         "interestLabels": safe_labels,
         "recommendationHints": safe_hints[:5],
         "contentType": content_type,
+        "interestCategory": interest_category,
         "contentCategory": content_category,
         "intent": item_intent,
         "summaryForProfile": summary_for_profile,
@@ -812,6 +883,8 @@ def normalize_platform(value: Any, item: dict[str, Any]) -> str:
         return "bilibili"
     if domain.endswith("youtube.com") or domain.endswith("youtu.be") or has_keyword(title_haystack, "youtube"):
         return "youtube"
+    if domain.endswith("github.com") or has_keyword(title_haystack, "github"):
+        return "github"
     if domain.endswith("weixin.qq.com") or has_keyword(title_haystack, "wechat", "微信", "weixin"):
         return "wechat"
     if platform in ALLOWED_PLATFORMS:
@@ -1349,6 +1422,9 @@ def run_once(cfg: WorkerConfig) -> int:
         print("Claimed task has no taskId.", file=sys.stderr)
         return 2
 
+    if cfg.verbose:
+        print_task(task)
+
     if not confirm(task, cfg):
         if not cfg.dry_run:
             complete_task(cfg.base_url, task_id, {
@@ -1359,9 +1435,17 @@ def run_once(cfg: WorkerConfig) -> int:
         return 1
 
     try:
-        raw_items = enrich_public_url_items(collect_task(task, cfg))
-        analyzed_items = analyze_with_codex_cli(task, raw_items, cfg) if cfg.use_codex_cli else raw_items
+        collected_items = collect_task(task, cfg)
+        verbose_json(cfg.verbose, "Collected raw items", collected_items)
+        raw_items = enrich_public_url_items(collected_items)
+        verbose_json(cfg.verbose, "Agent Reach enriched items", raw_items)
+        if cfg.use_codex_cli:
+            analyzed_items = analyze_with_codex_cli(task, raw_items, cfg)
+        else:
+            verbose_log(cfg.verbose, "\nCodex CLI disabled. Use --use-codex-cli to enable analysis.")
+            analyzed_items = raw_items
         result = build_result(analyzed_items)
+        verbose_json(cfg.verbose, "behavior_event JSON", {"events": result["items"]})
         if cfg.direct_behavior_batch:
             result["ingest"] = False
             result.setdefault("metadata", {})["directBehaviorBatch"] = True
@@ -1371,8 +1455,10 @@ def run_once(cfg: WorkerConfig) -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if cfg.direct_behavior_batch:
-            result.setdefault("metadata", {})["behaviorBatchResponse"] = post_behavior_batch(cfg.base_url, analyzed_items)
+            result.setdefault("metadata", {})["behaviorBatchResponse"] = post_behavior_batch(
+                cfg.base_url, analyzed_items, verbose=cfg.verbose)
         response = complete_task(cfg.base_url, task_id, result)
+        verbose_json(cfg.verbose, "Task completion response", response)
         print(json.dumps(response, ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:
@@ -1402,6 +1488,7 @@ def parse_args() -> WorkerConfig:
     parser.add_argument("--codex-timeout", type=int, default=60, help="Seconds to wait for Codex CLI analysis.")
     parser.add_argument("--direct-behavior-batch", action="store_true",
                         help="POST normalized items directly to /api/v1/behavior-events/batch, then complete the task without duplicate ingestion.")
+    parser.add_argument("--verbose", action="store_true", help="Print task, Agent Reach, Codex CLI, behavior event, and backend POST traces.")
     args = parser.parse_args()
     return WorkerConfig(
         base_url=args.base_url,
@@ -1417,6 +1504,7 @@ def parse_args() -> WorkerConfig:
         print_codex_output=args.print_codex_output,
         codex_timeout=max(1, args.codex_timeout),
         direct_behavior_batch=args.direct_behavior_batch,
+        verbose=args.verbose,
     )
 
 
