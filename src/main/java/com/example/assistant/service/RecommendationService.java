@@ -5,6 +5,7 @@ import com.example.assistant.dto.ActivityRequest;
 import com.example.assistant.dto.DailyProfileResponse;
 import com.example.assistant.dto.InterestTermResponse;
 import com.example.assistant.dto.RecommendationRefreshPolicyResponse;
+import com.example.assistant.dto.RecommendationEvidenceResponse;
 import com.example.assistant.dto.RecommendationResponse;
 import com.example.assistant.dto.RecommendationSearchResponse;
 import com.example.assistant.dto.RecommendationTodaySummaryResponse;
@@ -55,11 +56,12 @@ public class RecommendationService {
     private final UserActivityRepository userActivityRepository;
     private final List<PlatformCollector> collectors;
     private final UserContext userContext;
+    private final UserProfileBuilder userProfileBuilder;
 
     public RecommendationService(AssistantProperties properties, ProfileService profileService,
             ActivityService activityService, ContentItemRepository contentItemRepository,
             RecommendationRepository recommendationRepository, UserActivityRepository userActivityRepository,
-            List<PlatformCollector> collectors, UserContext userContext) {
+            List<PlatformCollector> collectors, UserContext userContext, UserProfileBuilder userProfileBuilder) {
         this.properties = properties;
         this.profileService = profileService;
         this.activityService = activityService;
@@ -68,6 +70,7 @@ public class RecommendationService {
         this.userActivityRepository = userActivityRepository;
         this.collectors = collectors;
         this.userContext = userContext;
+        this.userProfileBuilder = userProfileBuilder;
     }
 
     @Transactional
@@ -117,7 +120,11 @@ public class RecommendationService {
 
         if (recommendations.isEmpty()) {
             if (policy.recentActivityCount() > 0) {
-                recommendations = List.of(basicRecommendation(resolvedUserId, policy.recentActivityCount()));
+                RecommendationResponse fallback = basicRecommendation(resolvedUserId, policy.recentActivityCount());
+                recommendations = fallback == null ? List.of() : List.of(fallback);
+                if (recommendations.isEmpty()) {
+                    return emptyTodaySummary(resolvedUserId, EMPTY_MESSAGE, policy);
+                }
                 log.info("todaySummary fallback generated userId={} behaviorCount24h={} recommendationCount={} status={} fallbackReason={}",
                         resolvedUserId, policy.recentActivityCount(), recommendations.size(), "SUCCESS",
                         "recent_behavior_without_recommendations");
@@ -174,10 +181,12 @@ public class RecommendationService {
             recommendationRepository.deleteByUserIdAndRecommendationDate(resolvedUserId, today);
         }
 
-        List<InterestTerm> terms = profileService.topTerms(resolvedUserId);
+        var profile = userProfileBuilder.build(resolvedUserId);
+        List<InterestTerm> terms = profile.topInterests().stream()
+                .map(interest -> new InterestTerm(resolvedUserId, interest.name(), interest.score(), LocalDateTime.now()))
+                .toList();
         if (terms.isEmpty()) {
-            profileService.initializeDefaultTerms(resolvedUserId);
-            terms = profileService.topTerms(resolvedUserId);
+            return List.of();
         }
         Map<String, InterestTerm> termByName = terms.stream()
                 .collect(Collectors.toMap(InterestTerm::getTerm, Function.identity(), (left, right) -> left));
@@ -189,7 +198,7 @@ public class RecommendationService {
                 .map(this::saveContent)
                 .filter(content -> !feedbackSignals.blockedPlatforms().contains(normalize(content.getPlatform())))
                 .map(content -> new ScoredContent(content, score(content, termByName, extraQueries, feedbackSignals),
-                        reason(content, termByName, extraQueries, feedbackSignals)))
+                        reason(content, termByName, extraQueries, feedbackSignals, profile.evidence())))
                 .filter(item -> item.score() > 0)
                 .sorted(Comparator.comparingDouble(ScoredContent::score).reversed())
                 .limit(10)
@@ -394,7 +403,7 @@ public class RecommendationService {
     }
 
     private String reason(ContentItem content, Map<String, InterestTerm> termByName, List<String> extraQueries,
-            FeedbackSignals feedbackSignals) {
+            FeedbackSignals feedbackSignals, List<com.example.assistant.dto.ProfileV2Response.Evidence> evidence) {
         String haystack = haystack(content);
         List<String> matched = termByName.keySet().stream()
                 .filter(term -> haystack.contains(normalize(term)))
@@ -410,6 +419,15 @@ public class RecommendationService {
         }
         if (feedbackSignals.likedPlatforms().contains(normalize(content.getPlatform()))) {
             return "与你之前喜欢的平台和标签相似。";
+        }
+        if (evidence.stream().anyMatch(item -> "page-visit".equalsIgnoreCase(item.source()))) {
+            return "你浏览过具体内容，推荐与这些页面主题相近的内容。";
+        }
+        if (evidence.stream().anyMatch(item -> "browser-history".equalsIgnoreCase(item.source()))) {
+            return "你访问过相关页面，推荐与这些历史记录主题相近的内容。";
+        }
+        if (evidence.stream().anyMatch(item -> "LOW".equalsIgnoreCase(item.confidence()))) {
+            return "当前只有低置信度辅助信号，因此先谨慎推荐相近主题。";
         }
         if (matched.isEmpty()) {
             return "根据你的默认兴趣推荐。";
@@ -536,7 +554,8 @@ public class RecommendationService {
                     "PUBLIC_URL",
                     "manual-input",
                     "user_input",
-                    content.getPlatform()));
+                    content.getPlatform(),
+                    null));
         });
     }
 
@@ -583,7 +602,8 @@ public class RecommendationService {
                         content.getAuthor(),
                         content.getSummary(),
                         content.getPublishedAt(),
-                        content.getTags()));
+                        content.getTags()),
+                basedOnEvidence(recommendation.getUserId(), content));
     }
 
     private String sha256(String text) {
@@ -610,6 +630,10 @@ public class RecommendationService {
     }
 
     private RecommendationResponse basicRecommendation(String userId, long behaviorCount24h) {
+        var profile = userProfileBuilder.build(userId);
+        if (profile.evidence().isEmpty()) {
+            return null;
+        }
         List<UserActivity> activities = userActivityRepository.findByUserIdAndOccurredAtAfterOrderByOccurredAtDesc(
                 userId, LocalDateTime.now().minusHours(24));
         List<UserActivity> trustedActivities = activities.stream()
@@ -655,7 +679,38 @@ public class RecommendationService {
                         "Habit Assistant",
                         reason,
                         LocalDateTime.now(),
-                        keywords));
+                        keywords),
+                profile.evidence().stream()
+                        .limit(5)
+                        .map(item -> new RecommendationEvidenceResponse(
+                                item.eventId(), item.title(), item.url(), item.source(), item.confidence()))
+                        .toList());
+    }
+
+    private List<RecommendationEvidenceResponse> basedOnEvidence(String userId, ContentItem content) {
+        String platform = normalize(content.getPlatform());
+        Set<String> contentTags = content.getTags().stream().map(this::normalize).collect(Collectors.toSet());
+        List<RecommendationEvidenceResponse> matched = userProfileBuilder.build(userId).evidence().stream()
+                .filter(item -> {
+                    String haystack = normalize(String.join(" ",
+                            item.title() == null ? "" : item.title(),
+                            item.url() == null ? "" : item.url(),
+                            item.source() == null ? "" : item.source()));
+                    return haystack.contains(platform)
+                            || contentTags.stream().anyMatch(tag -> !tag.isBlank() && haystack.contains(tag));
+                })
+                .limit(5)
+                .map(item -> new RecommendationEvidenceResponse(
+                        item.eventId(), item.title(), item.url(), item.source(), item.confidence()))
+                .toList();
+        if (!matched.isEmpty()) {
+            return matched;
+        }
+        return userProfileBuilder.build(userId).evidence().stream()
+                .limit(3)
+                .map(item -> new RecommendationEvidenceResponse(
+                        item.eventId(), item.title(), item.url(), item.source(), item.confidence()))
+                .toList();
     }
 
     private record ScoredContent(ContentItem content, double score, String reason) {

@@ -75,7 +75,8 @@ public class IntegrationController {
                 request.dataLevel(),
                 request.source(),
                 request.detectionReason(),
-                request.matchedKeyword()));
+                request.matchedKeyword(),
+                request.rawEvidence()));
     }
 
     @PostMapping("/mini/users/{userId}/visits")

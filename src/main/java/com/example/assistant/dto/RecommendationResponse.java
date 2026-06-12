@@ -11,7 +11,8 @@ public record RecommendationResponse(
         double score,
         String reason,
         FeedbackType feedback,
-        Content content) {
+        Content content,
+        List<RecommendationEvidenceResponse> basedOn) {
 
     public record Content(
             Long id,

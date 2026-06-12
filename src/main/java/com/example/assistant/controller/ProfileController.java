@@ -2,8 +2,10 @@ package com.example.assistant.controller;
 
 import com.example.assistant.dto.DailyProfileResponse;
 import com.example.assistant.dto.ProfileResponse;
+import com.example.assistant.dto.ProfileV2Response;
 import com.example.assistant.dto.UserSummaryResponse;
 import com.example.assistant.service.ProfileService;
+import com.example.assistant.service.UserProfileBuilder;
 import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,9 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class ProfileController {
 
     private final ProfileService profileService;
+    private final UserProfileBuilder userProfileBuilder;
 
-    public ProfileController(ProfileService profileService) {
+    public ProfileController(ProfileService profileService, UserProfileBuilder userProfileBuilder) {
         this.profileService = profileService;
+        this.userProfileBuilder = userProfileBuilder;
     }
 
     @GetMapping
@@ -26,8 +30,8 @@ public class ProfileController {
     }
 
     @GetMapping("/current")
-    public DailyProfileResponse currentDailyProfile() {
-        return profileService.dailyProfile(null, true);
+    public ProfileV2Response currentDailyProfile(@RequestParam(required = false) String userId) {
+        return userProfileBuilder.build(userId);
     }
 
     @GetMapping("/daily")

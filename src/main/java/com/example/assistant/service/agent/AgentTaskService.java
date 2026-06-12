@@ -104,14 +104,23 @@ public class AgentTaskService {
                 firstNonBlank(item.title(), item.summary(), item.url(), request.title()),
                 item.url(),
                 item.author(),
-                item.summary(),
-                compactText(item.title(), item.summary(), item.text()),
+                firstNonBlank(item.summaryForProfile(), item.summary()),
+                compactText(item.title(), item.summaryForProfile(), item.summary(), item.text()),
                 item.occurredAt(),
-                tags(platform, item.tags(), request.intent(), adapter(request)),
+                tags(platform, mergeLabels(item.tags(), item.interestLabels(), item.interestTags(),
+                        optionalLabels(item.contentType(), item.contentCategory(), item.intent())), request.intent(),
+                        adapter(request)),
                 item.confidence(),
                 item.dataLevel(),
                 item.detectionReason(),
-                item.matchedKeyword());
+                item.matchedKeyword(),
+                item.interestTags(),
+                item.contentType(),
+                item.contentCategory(),
+                item.intent(),
+                item.summaryForProfile(),
+                item.recommendationHints(),
+                item.rawEvidence());
     }
 
     private BehaviorEventRequest fromTask(String userId, AgentTaskRequest request) {
@@ -132,7 +141,14 @@ public class AgentTaskService {
                 null,
                 null,
                 null,
-                firstNonBlank(request.query(), request.url(), platform));
+                firstNonBlank(request.query(), request.url(), platform),
+                List.of(),
+                null,
+                null,
+                request.intent(),
+                null,
+                List.of(),
+                null);
     }
 
     private ActivityType inferType(String url, String title, String text) {
@@ -166,6 +182,34 @@ public class AgentTaskService {
                     .forEach(tags::add);
         }
         return tags.stream().toList();
+    }
+
+    private List<String> optionalLabels(String... values) {
+        List<String> labels = new ArrayList<>();
+        if (values != null) {
+            for (String value : values) {
+                if (!isBlank(value)) {
+                    labels.add(value.trim());
+                }
+            }
+        }
+        return labels;
+    }
+
+    @SafeVarargs
+    private final List<String> mergeLabels(List<String>... groups) {
+        Set<String> merged = new LinkedHashSet<>();
+        if (groups != null) {
+            for (List<String> group : groups) {
+                if (group != null) {
+                    group.stream()
+                            .filter(value -> !isBlank(value))
+                            .map(String::trim)
+                            .forEach(merged::add);
+                }
+            }
+        }
+        return merged.stream().toList();
     }
 
     private String adapter(AgentTaskRequest request) {

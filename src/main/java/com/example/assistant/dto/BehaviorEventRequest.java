@@ -4,6 +4,7 @@ import com.example.assistant.model.ActivityType;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 public record BehaviorEventRequest(
         String userId,
@@ -21,5 +22,12 @@ public record BehaviorEventRequest(
         String confidence,
         String dataLevel,
         String detectionReason,
-        String matchedKeyword) {
+        String matchedKeyword,
+        List<String> interestTags,
+        String contentType,
+        String contentCategory,
+        String intent,
+        String summaryForProfile,
+        List<String> recommendationHints,
+        Map<String, Object> rawEvidence) {
 }

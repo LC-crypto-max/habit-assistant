@@ -306,13 +306,22 @@ class ApiMockMvcTest {
                                     {
                                       "userId": "alice",
                                       "platform": "xiaohongshu",
-                                      "source": "agent-reach",
-                                      "externalId": "xhs-note-001",
-                                      "type": "FAVORITE",
+                                      "source": "browser-history",
+                                      "externalId": "edge-history-101",
+                                      "type": "VISIT",
                                       "title": "Xiaohongshu AI workflow note",
                                       "url": "https://www.xiaohongshu.com/explore/demo-note",
-                                      "summary": "Collected note from a compliant local export file.",
-                                      "tags": ["xiaohongshu", "ai", "workflow"]
+                                      "summary": "来自 Edge 浏览器历史的访问记录，visitCount=3",
+                                      "tags": ["xiaohongshu", "browser-history", "ai", "workflow"],
+                                      "confidence": "MEDIUM",
+                                      "dataLevel": "BROWSER_HISTORY",
+                                      "detectionReason": "browser_history",
+                                      "matchedKeyword": "xiaohongshu.com",
+                                      "rawEvidence": {
+                                        "browser": "edge",
+                                        "domain": "xiaohongshu.com",
+                                        "visitCount": 3
+                                      }
                                     },
                                     {
                                       "userId": "alice",
@@ -350,15 +359,25 @@ class ApiMockMvcTest {
                                     {
                                       "userId": "alice",
                                       "platform": "douyin",
-                                      "source": "codex-app-proxy",
+                                      "source": "visible-window",
                                       "externalId": "douyin_widget-35524",
-                                      "type": "VISIT",
+                                      "type": "APP_USAGE",
                                       "title": "正在使用抖音",
                                       "url": "",
                                       "summary": "本地代理检测到窗口：抖音",
                                       "text": "process=douyin_widget pid=35524 title=抖音",
                                       "occurredAt": "2026-06-06T16:21:05",
-                                      "tags": ["app-usage", "douyin", "short-video"]
+                                      "tags": ["app-usage", "visible-window", "douyin", "short-video"],
+                                      "confidence": "LOW",
+                                      "dataLevel": "APP_USAGE_SNAPSHOT",
+                                      "detectionReason": "window_title",
+                                      "matchedKeyword": "抖音",
+                                      "rawEvidence": {
+                                        "processName": "douyin_widget",
+                                        "windowTitle": "抖音",
+                                        "domain": "",
+                                        "visitCount": 0
+                                      }
                                     }
                                   ]
                                 }
@@ -369,10 +388,18 @@ class ApiMockMvcTest {
                 .andExpect(jsonPath("$.messagesPublished").value(0))
                 .andExpect(jsonPath("$.activities", hasSize(5)))
                 .andExpect(jsonPath("$.activities[0].platform").value("xiaohongshu"))
+                .andExpect(jsonPath("$.activities[0].url").value("https://www.xiaohongshu.com/explore/demo-note"))
+                .andExpect(jsonPath("$.activities[0].confidence").value("MEDIUM"))
+                .andExpect(jsonPath("$.activities[0].dataLevel").value("BROWSER_HISTORY"))
+                .andExpect(jsonPath("$.activities[0].rawEvidence.browser").value("edge"))
                 .andExpect(jsonPath("$.activities[1].platform").value("wechat"))
                 .andExpect(jsonPath("$.activities[2].platform").value("bilibili"))
                 .andExpect(jsonPath("$.activities[3].platform").value("douyin"))
                 .andExpect(jsonPath("$.activities[4].platform").value("douyin"))
+                .andExpect(jsonPath("$.activities[4].type").value("APP_USAGE"))
+                .andExpect(jsonPath("$.activities[4].confidence").value("LOW"))
+                .andExpect(jsonPath("$.activities[4].dataLevel").value("APP_USAGE_SNAPSHOT"))
+                .andExpect(jsonPath("$.activities[4].rawEvidence.processName").value("douyin_widget"))
                 .andExpect(jsonPath("$.activities[4].occurredAt").value("2026-06-06T16:21:05"));
 
         mockMvc.perform(post("/api/activities")
@@ -641,5 +668,111 @@ class ApiMockMvcTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.fields.keyword").exists());
+    }
+
+    @Test
+    @Order(10)
+    void profileV2AndRecommendationUseRealEvidence() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "weak-user",
+                                      "platform": "xiaohongshu",
+                                      "source": "visible-window",
+                                      "type": "APP_USAGE",
+                                      "title": "Visible app: xiaohongshu",
+                                      "summary": "Window title: 小红书",
+                                      "tags": ["visible-window", "xiaohongshu"],
+                                      "confidence": "LOW",
+                                      "dataLevel": "APP_USAGE_SNAPSHOT",
+                                      "detectionReason": "window_title"
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/profile/current")
+                        .param("userId", "weak-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileVersion").value("v2"))
+                .andExpect(jsonPath("$.topInterests", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.topInterests[0].confidence").value("LOW"));
+
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "profile-v2-user",
+                                      "platform": "browser",
+                                      "source": "browser-history",
+                                      "type": "VISIT",
+                                      "title": "Java Spring Boot Redis 高并发缓存实践",
+                                      "url": "https://example.com/java-spring-redis",
+                                      "summary": "来自 Edge 浏览器历史的访问记录，visitCount=4",
+                                      "tags": ["browser-history", "Java后端", "Redis", "Spring"],
+                                      "confidence": "MEDIUM",
+                                      "dataLevel": "BROWSER_HISTORY",
+                                      "detectionReason": "browser_history",
+                                      "matchedKeyword": "java",
+                                      "rawEvidence": {"browser": "edge", "domain": "example.com", "visitCount": 4}
+                                    },
+                                    {
+                                      "userId": "profile-v2-user",
+                                      "platform": "xiaohongshu",
+                                      "source": "browser-history",
+                                      "type": "VISIT",
+                                      "title": "小红书生活方式笔记",
+                                      "url": "https://www.xiaohongshu.com/explore/demo",
+                                      "summary": "来自 Edge 浏览器历史的访问记录，visitCount=3",
+                                      "tags": ["browser-history", "xiaohongshu", "生活方式"],
+                                      "confidence": "MEDIUM",
+                                      "dataLevel": "BROWSER_HISTORY",
+                                      "detectionReason": "browser_history",
+                                      "matchedKeyword": "xiaohongshu.com",
+                                      "rawEvidence": {"browser": "edge", "domain": "xiaohongshu.com", "visitCount": 3}
+                                    },
+                                    {
+                                      "userId": "profile-v2-user",
+                                      "platform": "desktop-app",
+                                      "source": "visible-window",
+                                      "type": "APP_USAGE",
+                                      "title": "Visible app: WindowsTerminal",
+                                      "summary": "Window title: PowerShell",
+                                      "tags": ["visible-window"],
+                                      "confidence": "LOW",
+                                      "dataLevel": "APP_USAGE_SNAPSHOT"
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/profile/current")
+                        .param("userId", "profile-v2-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.profileVersion").value("v2"))
+                .andExpect(jsonPath("$.topInterests[*].name").value(org.hamcrest.Matchers.hasItem("Java后端")))
+                .andExpect(jsonPath("$.platformPreferences[*].platform").value(org.hamcrest.Matchers.hasItem("xiaohongshu")))
+                .andExpect(jsonPath("$.platformPreferences[0].bestDataLevel").value("BROWSER_HISTORY"))
+                .andExpect(jsonPath("$.evidence", hasSize(greaterThanOrEqualTo(2))));
+
+        mockMvc.perform(post("/api/recommendations/rebuild")
+                        .param("userId", "profile-v2-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.recommendations", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.recommendations[0].basedOn", hasSize(greaterThanOrEqualTo(1))));
+
+        mockMvc.perform(get("/api/recommendations/today")
+                        .param("userId", "no-data-v2-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("EMPTY"))
+                .andExpect(jsonPath("$.recommendations", hasSize(0)));
     }
 }

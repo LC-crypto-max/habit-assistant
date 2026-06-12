@@ -42,6 +42,8 @@ build/
 __pycache__/
 *.pyc
 *.pyc.*
+tmp/
+scripts/tmp*/
 
 # OS temporary files
 .DS_Store

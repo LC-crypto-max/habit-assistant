@@ -48,6 +48,9 @@ public class UserActivity {
 
     private String matchedKeyword;
 
+    @Column(length = 4000)
+    private String rawEvidence;
+
     @ElementCollection
     private List<String> tags = new ArrayList<>();
 
@@ -56,12 +59,12 @@ public class UserActivity {
 
     public UserActivity(String userId, ActivityType type, String platform, String title, String url, String text,
             LocalDateTime occurredAt, List<String> tags) {
-        this(userId, type, platform, title, url, text, occurredAt, tags, null, null, null, null, null);
+        this(userId, type, platform, title, url, text, occurredAt, tags, null, null, null, null, null, null);
     }
 
     public UserActivity(String userId, ActivityType type, String platform, String title, String url, String text,
             LocalDateTime occurredAt, List<String> tags, String confidence, String dataLevel, String source,
-            String detectionReason, String matchedKeyword) {
+            String detectionReason, String matchedKeyword, String rawEvidence) {
         this.userId = userId;
         this.type = type;
         this.platform = platform;
@@ -75,6 +78,7 @@ public class UserActivity {
         this.source = source;
         this.detectionReason = detectionReason;
         this.matchedKeyword = matchedKeyword;
+        this.rawEvidence = rawEvidence;
     }
 
     public Long getId() {
@@ -131,5 +135,9 @@ public class UserActivity {
 
     public String getMatchedKeyword() {
         return matchedKeyword;
+    }
+
+    public String getRawEvidence() {
+        return rawEvidence;
     }
 }

@@ -29,11 +29,18 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from agent_reach_adapter import enrich_public_url
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -147,7 +154,9 @@ NEGATION_MARKERS = [
 ]
 CONTRAST_MARKERS = ["但", "但是", "然而", "不过", "but", "however"]
 ALLOWED_ITEM_FIELDS = {
+    "userId",
     "platform",
+    "source",
     "type",
     "externalId",
     "title",
@@ -159,8 +168,15 @@ ALLOWED_ITEM_FIELDS = {
     "dataLevel",
     "detectionReason",
     "matchedKeyword",
+    "interestTags",
+    "interestLabels",
     "recommendationHints",
+    "contentType",
+    "contentCategory",
+    "intent",
+    "summaryForProfile",
     "occurredAt",
+    "rawEvidence",
 }
 ALLOWED_PLATFORMS = {
     "xiaohongshu",
@@ -168,19 +184,19 @@ ALLOWED_PLATFORMS = {
     "bilibili",
     "wechat",
     "browser",
-    "local-terminal",
     "desktop-app",
     "web",
 }
-ALLOWED_TYPES = {"VISIT", "WATCH", "SEARCH", "FAVORITE"}
+ALLOWED_TYPES = {"VISIT", "WATCH", "SEARCH", "FAVORITE", "APP_USAGE"}
 ALLOWED_CONFIDENCE = {"LOW", "MEDIUM", "HIGH"}
-ALLOWED_DATA_LEVELS = {"APP_USAGE_SNAPSHOT", "BROWSER_HISTORY", "PAGE_VISIBLE_CONTENT", "PUBLIC_URL"}
+ALLOWED_DATA_LEVELS = {"APP_USAGE_SNAPSHOT", "BROWSER_HISTORY", "PAGE_VISIBLE_CONTENT", "PUBLIC_URL", "LOCAL_NOTE"}
 ALLOWED_DETECTION_REASONS = {
     "process_name",
     "window_title",
     "url_domain",
     "browser_history",
     "page_visible_content",
+    "public_url_enrichment",
 }
 SENSITIVE_FIELD_NAMES = {
     "cookie",
@@ -222,6 +238,7 @@ class WorkerConfig:
     print_codex_prompt: bool
     print_codex_output: bool
     codex_timeout: int
+    direct_behavior_batch: bool
 
 
 def now_iso() -> str:
@@ -390,6 +407,11 @@ def complete_task(base_url: str, task_id: str, payload: dict[str, Any]) -> dict[
     return post_json(base_url.rstrip("/") + f"/api/agent/queries/{task_id}/result", payload)
 
 
+def post_behavior_batch(base_url: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    payload = {"events": [normalize_result_item(item) for item in items]}
+    return post_json(base_url.rstrip("/") + "/api/v1/behavior-events/batch", payload)
+
+
 def print_task(task: dict[str, Any]) -> None:
     print("\nAgent query task")
     print("=" * 72)
@@ -450,6 +472,7 @@ def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) ->
         "不要读取 Cookie、Token、Session、账号密码、聊天记录、私信、支付记录。\n"
         "不要调用外部网络。\n"
         "不要推测不存在的访问记录。\n"
+        "如果 raw_items 中 url 为空，不允许补写或编造 URL。\n"
         "如果数据来自 visible-window，只能标记为 LOW confidence。\n"
         "如果数据来自 browser-history，可标记为 MEDIUM confidence。\n"
         "如果数据来自 browser-extension/page-visit，可标记为 HIGH confidence。\n"
@@ -458,8 +481,10 @@ def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) ->
         "{\n"
         '  "items": [\n'
         "    {\n"
-        '      "platform": "xiaohongshu | youtube | bilibili | wechat | browser | local-terminal | desktop-app | web",\n'
-        '      "type": "VISIT | WATCH | SEARCH | FAVORITE",\n'
+        '      "userId": "me",\n'
+        '      "platform": "xiaohongshu | youtube | bilibili | wechat | browser | desktop-app | web",\n'
+        '      "source": "visible-window | browser-history | page-visit | local-notes | public-url | codex-cli-analysis",\n'
+        '      "type": "VISIT | WATCH | SEARCH | FAVORITE | APP_USAGE",\n'
         '      "externalId": "",\n'
         '      "title": "",\n'
         '      "url": "",\n'
@@ -467,11 +492,18 @@ def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) ->
         '      "summary": "",\n'
         '      "tags": [],\n'
         '      "confidence": "LOW | MEDIUM | HIGH",\n'
-        '      "dataLevel": "APP_USAGE_SNAPSHOT | BROWSER_HISTORY | PAGE_VISIBLE_CONTENT | PUBLIC_URL",\n'
+        '      "dataLevel": "APP_USAGE_SNAPSHOT | BROWSER_HISTORY | PAGE_VISIBLE_CONTENT | PUBLIC_URL | LOCAL_NOTE",\n'
         '      "detectionReason": "process_name | window_title | url_domain | browser_history | page_visible_content",\n'
         '      "matchedKeyword": "",\n'
+        '      "interestTags": [],\n'
+        '      "interestLabels": [],\n'
+        '      "contentType": "video | note | article | web-page",\n'
+        '      "contentCategory": "",\n'
+        '      "intent": "",\n'
+        '      "summaryForProfile": "",\n'
         '      "recommendationHints": [],\n'
-        '      "occurredAt": ""\n'
+        '      "occurredAt": "",\n'
+        '      "rawEvidence": {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0}\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
@@ -527,15 +559,17 @@ def analyze_with_codex_cli(task: dict[str, Any], raw_items: list[dict[str, Any]]
         print("=" * 72)
 
     try:
-        decoded = extract_json_object(output)
+        decoded = parse_codex_json_output(output)
         analyzed = validate_codex_items(decoded)
+        if has_invented_url(raw_items, analyzed):
+            raise ValueError("Codex output invented URL for empty raw_items")
     except Exception as exc:
         print(f"Warning: Codex output rejected: {sanitize(exc, 400)}. Falling back to raw_items.", file=sys.stderr)
         return raw_items
     return analyzed or raw_items
 
 
-def extract_json_object(output: str) -> dict[str, Any]:
+def parse_codex_json_output(output: str) -> dict[str, Any]:
     text = (output or "").strip()
     if not text:
         raise ValueError("empty output")
@@ -561,6 +595,10 @@ def extract_json_object(output: str) -> dict[str, Any]:
     raise ValueError("no JSON object found")
 
 
+def extract_json_object(output: str) -> dict[str, Any]:
+    return parse_codex_json_output(output)
+
+
 def validate_codex_items(decoded: dict[str, Any]) -> list[dict[str, Any]]:
     if has_sensitive_field(decoded):
         raise ValueError("sensitive field name found")
@@ -577,6 +615,81 @@ def validate_codex_items(decoded: dict[str, Any]) -> list[dict[str, Any]]:
         if item:
             sanitized.append(item)
     return sanitized
+
+
+def has_invented_url(raw_items: list[dict[str, Any]], analyzed_items: list[dict[str, Any]]) -> bool:
+    raw_urls = [str(item.get("url") or "").strip() for item in raw_items if isinstance(item, dict)]
+    if any(raw_urls):
+        return False
+    return any(str(item.get("url") or "").strip() for item in analyzed_items if isinstance(item, dict))
+
+
+def sanitize_raw_evidence(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0}
+    safe: dict[str, Any] = {
+        "browser": sanitize(value.get("browser") or "", 80),
+        "processName": sanitize(value.get("processName") or "", 120),
+        "windowTitle": sanitize(value.get("windowTitle") or "", 240),
+        "domain": sanitize(value.get("domain") or "", 160),
+        "visitCount": 0,
+        "adapter": sanitize(value.get("adapter") or "", 80),
+        "adapterMode": sanitize(value.get("adapterMode") or "", 80),
+        "contentType": sanitize(value.get("contentType") or "", 80),
+        "contentCategory": sanitize(value.get("contentCategory") or "", 120),
+        "intent": sanitize(value.get("intent") or "", 120),
+    }
+    try:
+        safe["visitCount"] = max(0, int(value.get("visitCount") or 0))
+    except (TypeError, ValueError):
+        safe["visitCount"] = 0
+    return safe
+
+
+def domain_from_url(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        host = urllib.parse.urlparse(url).hostname or ""
+        return host.lower().removeprefix("www.")
+    except ValueError:
+        return ""
+
+
+def has_keyword(text: str, *keywords: str) -> bool:
+    return any(keyword.lower() in text for keyword in keywords)
+
+
+def unique_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = sanitize(value, 120)
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
+
+
+def infer_interest_labels(item: dict[str, Any]) -> list[str]:
+    text = " ".join([
+        str(item.get("platform") or ""),
+        str(item.get("title") or ""),
+        str(item.get("url") or ""),
+        str(item.get("summary") or ""),
+        " ".join(str(tag) for tag in item.get("tags") or [] if tag is not None),
+    ]).lower()
+    labels: list[str] = []
+    if "xiaohongshu.com" in text or "xhslink.com" in text or "xiaohongshu" in text or "小红书" in text:
+        labels.extend(["小红书", "生活方式"])
+    if "spring" in text or "redis" in text or "java" in text:
+        labels.append("Java后端")
+    if "youtube.com" in text or "youtu.be" in text or "youtube" in text:
+        labels.append("视频学习")
+    if "bilibili.com" in text or "bilibili" in text or "b站" in text:
+        labels.append("B站视频")
+    return unique_values(labels)
 
 
 def has_sensitive_field(value: Any) -> bool:
@@ -606,6 +719,20 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
         safe_tags = [sanitize(tags, 80)]
     else:
         safe_tags = []
+    labels = filtered.get("interestLabels")
+    if isinstance(labels, list):
+        safe_labels = [sanitize(label, 120) for label in labels if sanitize(label, 120)]
+    elif labels:
+        safe_labels = [sanitize(labels, 120)]
+    else:
+        safe_labels = []
+    interest_tags = filtered.get("interestTags")
+    if isinstance(interest_tags, list):
+        safe_interest_tags = [sanitize(tag, 120) for tag in interest_tags if sanitize(tag, 120)]
+    elif interest_tags:
+        safe_interest_tags = [sanitize(interest_tags, 120)]
+    else:
+        safe_interest_tags = []
     hints = filtered.get("recommendationHints")
     if isinstance(hints, list):
         safe_hints = [sanitize(hint, 160) for hint in hints if sanitize(hint, 160)]
@@ -614,8 +741,23 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
     else:
         safe_hints = []
 
+    raw_evidence = sanitize_raw_evidence(filtered.get("rawEvidence"))
+    if raw_evidence:
+        filtered = {**filtered, "rawEvidence": raw_evidence}
+    content_type = sanitize(filtered.get("contentType") or raw_evidence.get("contentType") or "", 80)
+    content_category = sanitize(filtered.get("contentCategory") or raw_evidence.get("contentCategory") or "", 120)
+    item_intent = sanitize(filtered.get("intent") or raw_evidence.get("intent") or "", 120)
+    summary_for_profile = sanitize(filtered.get("summaryForProfile") or "", SUMMARY_TEXT_LIMIT)
+    if content_type:
+        raw_evidence["contentType"] = content_type
+    if content_category:
+        raw_evidence["contentCategory"] = content_category
+    if item_intent:
+        raw_evidence["intent"] = item_intent
+
+    source = normalize_source(filtered.get("source"), filtered)
     platform = normalize_platform(filtered.get("platform"), filtered)
-    event_type = normalize_event_type(filtered.get("type"))
+    event_type = normalize_event_type(filtered.get("type"), filtered)
     confidence = normalize_choice(filtered.get("confidence"), ALLOWED_CONFIDENCE, default_confidence(filtered))
     data_level = normalize_choice(filtered.get("dataLevel"), ALLOWED_DATA_LEVELS, default_data_level(filtered))
     detection_reason = normalize_choice(
@@ -623,50 +765,91 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
         ALLOWED_DETECTION_REASONS,
         default_detection_reason(filtered),
     )
+    safe_labels = unique_values([*safe_labels, *safe_interest_tags, *infer_interest_labels(filtered)])[:8]
+    safe_tags = unique_values([*safe_tags, *safe_interest_tags, *safe_labels, content_type, content_category])[:12]
+    summary = sanitize(summary_for_profile or filtered.get("summary") or "", SUMMARY_TEXT_LIMIT)
 
     return {
+        "userId": sanitize(filtered.get("userId") or "", 120),
         "platform": platform,
+        "source": source,
         "type": event_type,
         "externalId": sanitize(filtered.get("externalId") or "", 160),
         "title": sanitize(filtered.get("title") or "", 300),
         "url": sanitize(filtered.get("url") or "", 600),
         "author": sanitize(filtered.get("author") or "", 160),
-        "summary": sanitize(filtered.get("summary") or "", SUMMARY_TEXT_LIMIT),
+        "summary": summary,
         "tags": safe_tags[:12],
         "confidence": confidence,
         "dataLevel": data_level,
         "detectionReason": detection_reason,
         "matchedKeyword": sanitize(filtered.get("matchedKeyword") or "", 120),
+        "interestTags": safe_interest_tags[:8],
+        "interestLabels": safe_labels,
         "recommendationHints": safe_hints[:5],
+        "contentType": content_type,
+        "contentCategory": content_category,
+        "intent": item_intent,
+        "summaryForProfile": summary_for_profile,
         "occurredAt": dto_local_datetime(filtered.get("occurredAt")),
+        "rawEvidence": raw_evidence,
     }
 
 
 def normalize_platform(value: Any, item: dict[str, Any]) -> str:
     platform = sanitize(value or "", 80).strip().lower()
-    haystack = " ".join([
-        platform,
+    url = str(item.get("url") or "")
+    domain = domain_from_url(url)
+    title_haystack = " ".join([
         str(item.get("title") or ""),
-        str(item.get("url") or ""),
         str(item.get("summary") or ""),
+        str((item.get("rawEvidence") or {}).get("windowTitle") or "") if isinstance(item.get("rawEvidence"), dict) else "",
         " ".join(str(tag) for tag in item.get("tags") or [] if tag is not None),
     ]).lower()
-    if "xiaohongshu" in haystack or "小红书" in haystack or "xhslink.com" in haystack:
+    if domain.endswith("xiaohongshu.com") or domain.endswith("xhslink.com") or has_keyword(title_haystack, "xiaohongshu", "小红书", "xhs"):
         return "xiaohongshu"
-    if "bilibili" in haystack or "b站" in haystack:
+    if domain.endswith("bilibili.com") or has_keyword(title_haystack, "bilibili", "b站"):
         return "bilibili"
-    if "youtube" in haystack or "youtu.be" in haystack:
+    if domain.endswith("youtube.com") or domain.endswith("youtu.be") or has_keyword(title_haystack, "youtube"):
         return "youtube"
-    if "wechat" in haystack or "微信" in haystack or "weixin" in haystack:
+    if domain.endswith("weixin.qq.com") or has_keyword(title_haystack, "wechat", "微信", "weixin"):
         return "wechat"
     if platform in ALLOWED_PLATFORMS:
         return platform
-    return "web" if str(item.get("url") or "").startswith(("http://", "https://")) else "local-terminal"
+    return "web" if url.startswith(("http://", "https://")) else "desktop-app"
 
 
-def normalize_event_type(value: Any) -> str:
-    event_type = sanitize(value or "VISIT", 40).strip().upper()
+def normalize_event_type(value: Any, item: dict[str, Any]) -> str:
+    default = "APP_USAGE" if default_data_level(item) == "APP_USAGE_SNAPSHOT" else "VISIT"
+    event_type = sanitize(value or default, 40).strip().upper()
     return event_type if event_type in ALLOWED_TYPES else "VISIT"
+
+
+def normalize_source(value: Any, item: dict[str, Any]) -> str:
+    source = sanitize(value or "", 80).strip().lower()
+    allowed = {
+        "visible-window",
+        "browser-history",
+        "page-visit",
+        "local-notes",
+        "public-url",
+        "codex-cli-analysis",
+        "agent-reach-mock",
+        "agent-reach-enrichment",
+    }
+    if source in allowed:
+        return source
+    data_level = str(item.get("dataLevel") or "").upper()
+    tags = {str(tag).lower() for tag in item.get("tags") or []}
+    if data_level == "PAGE_VISIBLE_CONTENT" or "page-visit" in tags or "browser-extension" in tags:
+        return "page-visit"
+    if data_level == "BROWSER_HISTORY" or "browser-history" in tags:
+        return "browser-history"
+    if data_level == "LOCAL_NOTE" or "local-notes" in tags:
+        return "local-notes"
+    if str(item.get("url") or "").startswith(("http://", "https://")):
+        return "public-url"
+    return "visible-window"
 
 
 def normalize_choice(value: Any, allowed: set[str], default: str) -> str:
@@ -677,9 +860,11 @@ def normalize_choice(value: Any, allowed: set[str], default: str) -> str:
 def default_confidence(item: dict[str, Any]) -> str:
     tags = {str(tag).lower() for tag in item.get("tags") or []}
     source = str(item.get("source") or "").lower()
-    if "browser-extension" in tags or "page-visit" in tags or "page_visible_content" in source:
+    if source in {"visible-window"} or "visible-window" in tags:
+        return "LOW"
+    if "browser-extension" in tags or "page-visit" in tags or "page_visible_content" in source or source == "page-visit":
         return "HIGH"
-    if "browser-history" in tags or "browser_history" in source or str(item.get("url") or "").startswith(("http://", "https://")):
+    if "browser-history" in tags or "browser_history" in source or source == "browser-history" or source.startswith("agent-reach") or str(item.get("url") or "").startswith(("http://", "https://")):
         return "MEDIUM"
     return "LOW"
 
@@ -687,10 +872,14 @@ def default_confidence(item: dict[str, Any]) -> str:
 def default_data_level(item: dict[str, Any]) -> str:
     tags = {str(tag).lower() for tag in item.get("tags") or []}
     source = str(item.get("source") or "").lower()
-    if "browser-extension" in tags or "page-visit" in tags or "page_visible_content" in source:
+    if source == "local-notes" or "local-notes" in tags:
+        return "LOCAL_NOTE"
+    if "browser-extension" in tags or "page-visit" in tags or "page_visible_content" in source or source == "page-visit":
         return "PAGE_VISIBLE_CONTENT"
-    if "browser-history" in tags or "browser_history" in source:
+    if "browser-history" in tags or "browser_history" in source or source == "browser-history":
         return "BROWSER_HISTORY"
+    if source.startswith("agent-reach"):
+        return "PUBLIC_URL"
     if str(item.get("url") or "").startswith(("http://", "https://")):
         return "PUBLIC_URL"
     return "APP_USAGE_SNAPSHOT"
@@ -698,10 +887,13 @@ def default_data_level(item: dict[str, Any]) -> str:
 
 def default_detection_reason(item: dict[str, Any]) -> str:
     tags = {str(tag).lower() for tag in item.get("tags") or []}
-    if "browser-history" in tags:
+    source = str(item.get("source") or "").lower()
+    if "browser-history" in tags or source == "browser-history":
         return "browser_history"
-    if "browser-extension" in tags or "page-visit" in tags:
+    if "browser-extension" in tags or "page-visit" in tags or source == "page-visit":
         return "page_visible_content"
+    if source.startswith("agent-reach"):
+        return "public_url_enrichment"
     if str(item.get("url") or "").startswith(("http://", "https://")):
         return "url_domain"
     if item.get("title"):
@@ -732,7 +924,8 @@ def collect_task(task: dict[str, Any], cfg: WorkerConfig) -> list[dict[str, Any]
         return collect_browser_or_public_url(str(url), str(query), cfg.limit)
 
     return [{
-        "platform": sanitize(platform or "agent"),
+        "platform": sanitize(platform or "web"),
+        "source": "visible-window",
         "type": "SEARCH",
         "externalId": "",
         "title": sanitize(query or url or "Agent query"),
@@ -745,14 +938,42 @@ def collect_task(task: dict[str, Any], cfg: WorkerConfig) -> list[dict[str, Any]
         "detectionReason": "window_title",
         "matchedKeyword": sanitize(query or platform or intent, 120),
         "occurredAt": dto_local_datetime(),
+        "rawEvidence": {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0},
     }]
+
+
+def should_enrich_public_url(item: dict[str, Any]) -> bool:
+    url = str(item.get("url") or "")
+    source = str(item.get("source") or "").lower()
+    data_level = str(item.get("dataLevel") or "").upper()
+    return (
+        url.startswith(("http://", "https://"))
+        and source in {"browser-history", "public-url"}
+        and data_level in {"", "BROWSER_HISTORY", "PUBLIC_URL"}
+    )
+
+
+def enrich_public_url_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if should_enrich_public_url(item):
+            try:
+                enriched.append(enrich_public_url(item))
+                continue
+            except Exception as exc:
+                print(f"Warning: Agent Reach mock enrichment failed: {sanitize(exc, 300)}", file=sys.stderr)
+        enriched.append(item)
+    return enriched
 
 
 def collect_visible_apps(limit: int) -> list[dict[str, Any]]:
     if os.name != "nt":
         return [{
-            "platform": "local-terminal",
-            "type": "VISIT",
+            "platform": "desktop-app",
+            "source": "visible-window",
+            "type": "APP_USAGE",
             "externalId": "",
             "title": "App usage summary unavailable",
             "url": "",
@@ -764,6 +985,7 @@ def collect_visible_apps(limit: int) -> list[dict[str, Any]]:
             "detectionReason": "process_name",
             "matchedKeyword": "unsupported-os",
             "occurredAt": dto_local_datetime(),
+            "rawEvidence": {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0},
         }]
 
     items: list[dict[str, Any]] = []
@@ -772,10 +994,17 @@ def collect_visible_apps(limit: int) -> list[dict[str, Any]]:
         window_title = sanitize(row["windowTitle"])
         if not process_name or not window_title:
             continue
+        raw_evidence = {
+            "processName": process_name,
+            "windowTitle": window_title,
+            "domain": "",
+            "visitCount": 0,
+        }
         platform_tags = infer_tags("app", process_name, window_title)
         items.append({
-            "platform": "local-terminal",
-            "type": "VISIT",
+            "platform": normalize_platform("desktop-app", {"rawEvidence": raw_evidence, "title": window_title, "tags": platform_tags}),
+            "source": "visible-window",
+            "type": "APP_USAGE",
             "externalId": f"{process_name}-{row['processId']}",
             "title": f"Visible app: {process_name}",
             "url": "",
@@ -791,6 +1020,7 @@ def collect_visible_apps(limit: int) -> list[dict[str, Any]]:
             "detectionReason": "window_title" if window_title else "process_name",
             "matchedKeyword": sanitize(window_title or process_name, 120),
             "occurredAt": dto_local_datetime(),
+            "rawEvidence": raw_evidence,
         })
     return items
 
@@ -860,19 +1090,21 @@ def collect_local_notes(target: str, allowed_dirs: list[str], limit: int) -> lis
         text = sanitize(path.read_text(encoding="utf-8", errors="replace"), 1200)
         title = next((line.strip("# ").strip() for line in text.splitlines() if line.strip()), path.name)
         items.append({
-            "platform": "local-notes",
+            "platform": "desktop-app",
+            "source": "local-notes",
             "type": "VISIT",
             "externalId": str(path),
             "title": sanitize(title),
-            "url": str(path),
+            "url": "",
             "author": "",
             "summary": sanitize(text, 240),
             "tags": infer_tags(path.name, text),
             "confidence": "MEDIUM",
-            "dataLevel": "PUBLIC_URL",
-            "detectionReason": "url_domain",
+            "dataLevel": "LOCAL_NOTE",
+            "detectionReason": "page_visible_content",
             "matchedKeyword": sanitize(path.name, 120),
             "occurredAt": dto_local_datetime(),
+            "rawEvidence": {"processName": "", "windowTitle": path.name, "domain": "", "visitCount": 0},
         })
     return items
 
@@ -891,6 +1123,7 @@ def collect_youtube(url: str, query: str) -> list[dict[str, Any]]:
     if query:
         return [{
             "platform": "youtube",
+            "source": "public-url",
             "type": "SEARCH",
             "externalId": "",
             "title": sanitize(query),
@@ -903,6 +1136,7 @@ def collect_youtube(url: str, query: str) -> list[dict[str, Any]]:
             "detectionReason": "url_domain",
             "matchedKeyword": sanitize(query, 120),
             "occurredAt": dto_local_datetime(),
+            "rawEvidence": {"processName": "", "windowTitle": "", "domain": "youtube.com", "visitCount": 0},
         }]
     return []
 
@@ -910,14 +1144,16 @@ def collect_youtube(url: str, query: str) -> list[dict[str, Any]]:
 def collect_xiaohongshu(url: str, query: str, limit: int) -> list[dict[str, Any]]:
     if url.startswith(("http://", "https://")):
         items = collect_browser_or_public_url(url, query, limit)
+        domain = domain_from_url(url)
         for item in items:
-            item["platform"] = "xiaohongshu"
+            if domain.endswith("xiaohongshu.com") or domain.endswith("xhslink.com"):
+                item["platform"] = "xiaohongshu"
             item["type"] = "VISIT"
             item["summary"] = (
-                "Codex local worker accepted a Xiaohongshu public note URL. "
+                "Codex local worker accepted a public URL task. "
                 "Only public page metadata and user-provided query text are returned."
             )
-            item["tags"] = sorted(set([*item.get("tags", []), "xiaohongshu", "codex-proxy", "page-visit"]))
+            item["tags"] = sorted(set([*item.get("tags", []), item["platform"], "codex-proxy", "page-visit"]))
         return items
 
     visible_items = collect_visible_apps(limit)
@@ -935,6 +1171,7 @@ def collect_xiaohongshu(url: str, query: str, limit: int) -> list[dict[str, Any]
 
     return [{
         "platform": "xiaohongshu",
+        "source": "visible-window",
         "type": "SEARCH",
         "externalId": "",
         "title": sanitize(query or "Xiaohongshu local Codex proxy task"),
@@ -950,6 +1187,7 @@ def collect_xiaohongshu(url: str, query: str, limit: int) -> list[dict[str, Any]
         "detectionReason": "window_title",
         "matchedKeyword": sanitize(query or "xiaohongshu", 120),
         "occurredAt": dto_local_datetime(),
+        "rawEvidence": {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0},
     }]
 
 
@@ -971,6 +1209,7 @@ def run_bili_search(query: str, limit: int) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         return [{
             "platform": "bilibili",
+            "source": "public-url",
             "type": "SEARCH",
             "externalId": "",
             "title": sanitize(query),
@@ -983,6 +1222,7 @@ def run_bili_search(query: str, limit: int) -> list[dict[str, Any]]:
             "detectionReason": "url_domain",
             "matchedKeyword": sanitize(query, 120),
             "occurredAt": dto_local_datetime(),
+            "rawEvidence": {"processName": "", "windowTitle": "", "domain": "bilibili.com", "visitCount": 0},
         }]
 
     rows = decoded.get("data") if isinstance(decoded, dict) else decoded
@@ -996,6 +1236,7 @@ def run_bili_search(query: str, limit: int) -> list[dict[str, Any]]:
         url = f"https://www.bilibili.com/video/{bvid}" if bvid else sanitize(row.get("url") or "")
         items.append({
             "platform": "bilibili",
+            "source": "public-url",
             "type": "SEARCH",
             "externalId": bvid,
             "title": sanitize(row.get("title") or query),
@@ -1008,6 +1249,7 @@ def run_bili_search(query: str, limit: int) -> list[dict[str, Any]]:
             "detectionReason": "url_domain",
             "matchedKeyword": sanitize(query or bvid, 120),
             "occurredAt": dto_local_datetime(),
+            "rawEvidence": {"processName": "", "windowTitle": "", "domain": domain_from_url(url), "visitCount": 0},
         })
     return items
 
@@ -1028,6 +1270,7 @@ def collect_video_metadata(platform: str, url: str) -> list[dict[str, Any]]:
     data = json.loads(completed.stdout)
     return [{
         "platform": platform,
+        "source": "public-url",
         "type": "WATCH",
         "externalId": sanitize(data.get("id") or ""),
         "title": sanitize(data.get("title") or ""),
@@ -1040,13 +1283,16 @@ def collect_video_metadata(platform: str, url: str) -> list[dict[str, Any]]:
         "detectionReason": "url_domain",
         "matchedKeyword": sanitize(data.get("id") or platform, 120),
         "occurredAt": dto_local_datetime(),
+        "rawEvidence": {"processName": "", "windowTitle": "", "domain": domain_from_url(str(data.get("webpage_url") or url)), "visitCount": 0},
     }]
 
 
 def collect_browser_or_public_url(url: str, query: str, limit: int) -> list[dict[str, Any]]:
     if url.startswith(("http://", "https://")):
+        domain = domain_from_url(url)
         return [{
-            "platform": "web",
+            "platform": normalize_platform("web", {"url": url, "title": query}),
+            "source": "public-url",
             "type": "VISIT",
             "externalId": "",
             "title": sanitize(query or url),
@@ -1059,6 +1305,7 @@ def collect_browser_or_public_url(url: str, query: str, limit: int) -> list[dict
             "detectionReason": "url_domain",
             "matchedKeyword": sanitize(query or url, 120),
             "occurredAt": dto_local_datetime(),
+            "rawEvidence": {"processName": "", "windowTitle": "", "domain": domain, "visitCount": 0},
         }]
 
     history_path = Path("data/imports/browser_history_sample.json")
@@ -1068,7 +1315,8 @@ def collect_browser_or_public_url(url: str, query: str, limit: int) -> list[dict
     if not isinstance(rows, list):
         return []
     return [{
-        "platform": "browser",
+        "platform": normalize_platform("browser", {"url": row.get("url") or "", "title": row.get("title") or ""}),
+        "source": "browser-history",
         "type": "VISIT",
         "externalId": "",
         "title": sanitize(row.get("title") or ""),
@@ -1081,6 +1329,12 @@ def collect_browser_or_public_url(url: str, query: str, limit: int) -> list[dict
         "detectionReason": "browser_history",
         "matchedKeyword": sanitize(row.get("url") or row.get("title") or "", 120),
         "occurredAt": dto_local_datetime(row.get("visitTime")),
+        "rawEvidence": {
+            "processName": "",
+            "windowTitle": sanitize(row.get("title") or "", 240),
+            "domain": domain_from_url(str(row.get("url") or "")),
+            "visitCount": row.get("visitCount") or 0,
+        },
     } for row in rows[:limit] if isinstance(row, dict)]
 
 
@@ -1105,12 +1359,19 @@ def run_once(cfg: WorkerConfig) -> int:
         return 1
 
     try:
-        raw_items = collect_task(task, cfg)
+        raw_items = enrich_public_url_items(collect_task(task, cfg))
         analyzed_items = analyze_with_codex_cli(task, raw_items, cfg) if cfg.use_codex_cli else raw_items
         result = build_result(analyzed_items)
+        if cfg.direct_behavior_batch:
+            result["ingest"] = False
+            result.setdefault("metadata", {})["directBehaviorBatch"] = True
         if cfg.dry_run:
+            if cfg.direct_behavior_batch:
+                print(json.dumps({"events": result["items"]}, ensure_ascii=False, indent=2))
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
+        if cfg.direct_behavior_batch:
+            result.setdefault("metadata", {})["behaviorBatchResponse"] = post_behavior_batch(cfg.base_url, analyzed_items)
         response = complete_task(cfg.base_url, task_id, result)
         print(json.dumps(response, ensure_ascii=False, indent=2))
         return 0
@@ -1139,6 +1400,8 @@ def parse_args() -> WorkerConfig:
     parser.add_argument("--print-codex-prompt", action="store_true", help="Print the prompt sent to Codex CLI.")
     parser.add_argument("--print-codex-output", action="store_true", help="Print raw Codex CLI output.")
     parser.add_argument("--codex-timeout", type=int, default=60, help="Seconds to wait for Codex CLI analysis.")
+    parser.add_argument("--direct-behavior-batch", action="store_true",
+                        help="POST normalized items directly to /api/v1/behavior-events/batch, then complete the task without duplicate ingestion.")
     args = parser.parse_args()
     return WorkerConfig(
         base_url=args.base_url,
@@ -1153,6 +1416,7 @@ def parse_args() -> WorkerConfig:
         print_codex_prompt=args.print_codex_prompt,
         print_codex_output=args.print_codex_output,
         codex_timeout=max(1, args.codex_timeout),
+        direct_behavior_batch=args.direct_behavior_batch,
     )
 
 

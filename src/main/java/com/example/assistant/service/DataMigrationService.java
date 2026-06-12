@@ -151,7 +151,8 @@ public class DataMigrationService {
                 activity.getDataLevel(),
                 activity.getSource(),
                 activity.getDetectionReason(),
-                activity.getMatchedKeyword());
+                activity.getMatchedKeyword(),
+                null);
     }
 
     private ContentItemBackupRecord toContentRecord(ContentItem content) {

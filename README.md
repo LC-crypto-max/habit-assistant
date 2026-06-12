@@ -73,7 +73,7 @@ http://localhost:8080/
 | `POST` | `/api/auth/logout` | 退出登录 |
 | `GET` | `/api/auth/me` | 当前登录用户 |
 | `GET` | `/api/profile?userId=alice` | 查看用户画像 |
-| `GET` | `/api/profile/current` | 查看当前会话用户画像 |
+| `GET` | `/api/profile/current` | 查看当前会话 v2 用户画像，包含 topInterests、platformPreferences 和 evidence |
 | `GET` | `/api/recommendations/today?userId=alice` | 查看今日推荐 |
 | `POST` | `/api/recommendations/refresh?userId=alice` | 手动强制重新生成今日推荐 |
 | `POST` | `/api/recommendations/rebuild` | 按当前用户重建推荐 |
@@ -114,12 +114,28 @@ Invoke-RestMethod `
 行为事件现在会保存：
 
 - `confidence`：`LOW`、`MEDIUM`、`HIGH`
-- `dataLevel`：`APP_USAGE_SNAPSHOT`、`BROWSER_HISTORY`、`PAGE_VISIBLE_CONTENT`、`PUBLIC_URL`、`OFFICIAL_API`
-- `source`
+- `dataLevel`：`APP_USAGE_SNAPSHOT`、`BROWSER_HISTORY`、`PAGE_VISIBLE_CONTENT`、`PUBLIC_URL`、`LOCAL_NOTE`
+- `source`：`visible-window`、`browser-history`、`page-visit`、`local-notes`、`public-url`、`codex-cli-analysis`
 - `detectionReason`
 - `matchedKeyword`
+- `rawEvidence`：仅保存 `browser`、`processName`、`windowTitle`、`domain`、`visitCount`
 
 画像生成会过滤低质量事件：LOW 的窗口快照、乱码标题、系统窗口如 `WindowsTerminal`、`TextInputHost`、`SystemSettings` 不会进入长期兴趣词强化。LOW 信号只辅助判断“可能使用过某个平台”。
+
+统一采集规则：可见窗口只能作为 `LOW + APP_USAGE_SNAPSHOT + APP_USAGE`，浏览器历史为 `MEDIUM + BROWSER_HISTORY`，浏览器插件或页面访问为 `HIGH + PAGE_VISIBLE_CONTENT`。如果原始采集结果中 `url` 为空，worker 和 Codex CLI 分析都不允许补写或编造 URL。小红书、YouTube、B站优先根据 URL 域名识别；没有 URL 时，只有窗口标题明确包含平台关键词才会识别为对应平台。
+
+## v2 用户画像和推荐依据
+
+`GET /api/profile/current?userId=me` 返回基于真实 BehaviorEvent 重建的 v2 画像：
+
+- `profileVersion=v2`
+- `topInterests`：兴趣名、分数、证据数、最高置信度
+- `platformPreferences`：平台偏好、分数、证据数、最佳数据级别
+- `evidence`：用于画像的真实事件标题、URL、source、confidence
+
+画像会过滤 `WindowsTerminal`、`TextInputHost`、`SystemSettings`、空标题、乱码标题、空 URL 且没有平台关键词的事件，以及重复窗口快照。LOW 信号只作为辅助；MEDIUM/HIGH 的 browser-history、page-visit 会优先参与画像。
+
+`GET /api/recommendations/today` 和 `POST /api/recommendations/rebuild` 返回的推荐项会包含 `basedOn`，说明推荐依据来自哪些行为证据。没有可用真实证据时接口返回 `status=EMPTY`，不会返回 500。
 
 ## 开发数据清理
 
@@ -228,7 +244,7 @@ py -3 .\scripts\codex_query_worker.py --once --base-url http://localhost:8080
 
 ### Codex CLI 分析模式
 
-普通 worker 模式只使用脚本内置规则采集和归一化。Codex CLI 分析模式会在本地采集完成后，把 `raw_items` 交给 Codex CLI 做摘要、分类、标签提取和置信度补充，然后再回传后端。
+普通 worker 模式只使用脚本内置规则采集和归一化。Codex CLI 分析模式会在本地采集完成后，把 `raw_items` 交给 Codex CLI 做摘要、分类、`interestLabels`、`recommendationHints` 和置信度补充，然后再回传后端。
 
 执行链路：
 
@@ -236,7 +252,7 @@ py -3 .\scripts\codex_query_worker.py --once --base-url http://localhost:8080
 claim task
   -> collect_task 采集非敏感 raw_items
   -> 可选调用 Codex CLI 分析 raw_items
-  -> 字段白名单 + 敏感字段二次校验
+  -> 字段白名单 + 敏感字段二次校验 + 空 URL 防编造校验
   -> POST /api/agent/queries/{taskId}/result
 ```
 
@@ -273,7 +289,7 @@ py -3 .\scripts\codex_query_worker.py `
   --print-codex-output
 ```
 
-Codex CLI 不存在、超时、返回非 JSON、返回敏感字段或敏感内容时，worker 不会崩溃，会打印 warning 并自动 fallback 到原始 `raw_items`。
+Codex CLI 不存在、超时、返回非 JSON、返回敏感字段、返回敏感内容，或者给空 URL 的 `visible-window` 编造真实访问页面时，worker 不会崩溃，会打印 warning 并自动 fallback 到原始 `raw_items`。后端会把 Codex 返回的 `interestLabels` 合并进行为 tags，用于后续画像学习。
 
 ### 小红书 Codex 代理采集
 
@@ -441,6 +457,30 @@ py -3 .\scripts\codex_app_proxy.py --user-id alice --once --yes --print-payload 
 2026-06-06T16:21:05
 ```
 
+### 导入 Chrome / Edge 浏览器历史
+
+如果需要拿到真实访问过的 URL 和标题，可以运行独立脚本读取用户本人授权范围内的 Chrome / Edge `History` SQLite。脚本只复制并读取 `History` 数据库，只查询 `urls`、`visits` 表，不读取 `Cookies`、`Login Data`、`Web Data`、Token、Session、密码、表单或账号信息。
+
+```powershell
+py -3 .\scripts\import_browser_history.py --user-id me --browser edge --platform xiaohongshu --limit 200 --base-url http://localhost:8080
+
+py -3 .\scripts\import_browser_history.py --user-id me --browser chrome --platform youtube --limit 200 --base-url http://localhost:8080
+
+py -3 .\scripts\import_browser_history.py --user-id me --browser edge --platform all --limit 300 --base-url http://localhost:8080
+```
+
+先预览、不上传：
+
+```powershell
+py -3 .\scripts\import_browser_history.py --user-id me --browser edge --platform all --limit 20 --dry-run --print-payload
+```
+
+导入后查询最近行为：
+
+```powershell
+Invoke-RestMethod "http://localhost:8080/api/activities/recent?userId=me" | ConvertTo-Json -Depth 8
+```
+
 本地 Agent、Codex CLI worker 和后端任务调度的完整方案见 [docs/local-agent-architecture.md](docs/local-agent-architecture.md)。
 
 ## 可选：MySQL 运行
@@ -538,3 +578,59 @@ http://localhost:8088/assistant/
 - [Codex Data Agent](docs/codex-data-agent.md)
 - [Agent 任务架构](docs/agent-task-architecture.md)
 - [AGENTS.md](AGENTS.md)
+
+## 浏览器历史 + Agent Reach Mock 补全
+
+当前推荐的本地链路是“浏览器历史为主，Agent Reach 只做公开内容补全”：
+
+1. `scripts/import_browser_history.py` 只读取 Chrome / Edge 的 `History` SQLite，字段限定为 URL、标题、访问时间、访问次数，不读取 Cookie、Token、Session、密码、表单或账号信息。
+2. `scripts/codex_query_worker.py` 领取后端任务后，会把 `browser-history` 或 `public-url` item 交给 `scripts/agent_reach_adapter.py`。
+3. `agent_reach_adapter.enrich_public_url(item)` 第一阶段使用 mock enrichment，不联网，不读取凭据，只把公开 URL 转成统一结构。
+4. 如果开启 `--use-codex-cli`，Codex CLI 只分析增强后的 `raw_items`，生成兴趣标签、内容分类、画像摘要和推荐提示。
+5. 默认模式通过 agent query result 回调让后端入库；如果需要直接写行为事件，可以加 `--direct-behavior-batch`，worker 会 POST 到 `/api/v1/behavior-events/batch`。
+
+统一 item 结构示例：
+
+```json
+{
+  "platform": "bilibili",
+  "source": "agent-reach-mock",
+  "url": "https://www.bilibili.com/video/BV1demo",
+  "title": "Spring Boot Redis video",
+  "author": "",
+  "summary": "Bilibili public video metadata placeholder: Spring Boot Redis video",
+  "tags": ["bilibili", "agent-reach", "public-url", "video", "Java后端"],
+  "contentType": "video",
+  "contentCategory": "video",
+  "dataLevel": "PUBLIC_URL",
+  "confidence": "MEDIUM",
+  "rawEvidence": {
+    "browser": "edge",
+    "domain": "bilibili.com",
+    "visitCount": 2,
+    "adapter": "agent-reach",
+    "adapterMode": "mock"
+  }
+}
+```
+
+本地验证命令：
+
+```powershell
+py -3 -B -m unittest scripts.test_agent_reach_adapter scripts.test_codex_query_worker_policy scripts.test_import_browser_history
+mvn test
+```
+
+导入浏览器历史：
+
+```powershell
+py -3 .\scripts\import_browser_history.py --user-id me --browser edge --platform all --limit 100 --base-url http://localhost:8080 --print-payload
+```
+
+运行 worker，使用 mock 补全并可选启用 Codex CLI：
+
+```powershell
+py -3 .\scripts\codex_query_worker.py --once --base-url http://localhost:8080 --yes --direct-behavior-batch
+
+py -3 .\scripts\codex_query_worker.py --once --base-url http://localhost:8080 --yes --direct-behavior-batch --use-codex-cli --print-codex-output
+```

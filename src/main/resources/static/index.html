@@ -875,6 +875,7 @@
               <span class="pill">${escapeHtml(item.type || "VISIT")}</span>
               <span class="pill">${escapeHtml(item.confidence || "LOW")}</span>
               <span class="pill">${escapeHtml(item.dataLevel || "APP_USAGE_SNAPSHOT")}</span>
+              ${evidenceMeta(item)}
             </div>
           </article>
         `;
@@ -890,8 +891,20 @@
           <div class="terms" style="margin-top:10px">
             ${(item.tags || []).slice(0, 5).map((tag) => `<span class="term">${escapeHtml(tag)}</span>`).join("")}
           </div>
+          <div class="meta" style="margin-top:10px">${evidenceMeta(item)}</div>
         </article>
       `).join("") : `<div class="empty">暂无内容摘要。授权采集后会展示标题、摘要和标签。</div>`;
+    }
+
+    function evidenceMeta(item) {
+      const evidence = item.rawEvidence || {};
+      const chips = [];
+      if (item.source) chips.push(item.source);
+      if (item.detectionReason) chips.push(item.detectionReason);
+      if (evidence.browser) chips.push(evidence.browser);
+      if (evidence.domain) chips.push(evidence.domain);
+      if (evidence.processName && !isSystemText(evidence.processName)) chips.push(evidence.processName);
+      return chips.slice(0, 4).map((chip) => `<span class="pill">${escapeHtml(chip)}</span>`).join("");
     }
 
     function renderRecommendations(items, status = "") {
@@ -984,9 +997,13 @@
       `;
     }
 
-    function isSystemSignal(item) {
-      const text = `${item.platform || ""} ${item.title || ""} ${item.text || ""}`.toLowerCase();
+    function isSystemText(value) {
+      const text = String(value || "").toLowerCase();
       return ["windowsterminal", "textinputhost", "systemsettings", "powershell", "cmd.exe"].some((name) => text.includes(name));
+    }
+
+    function isSystemSignal(item) {
+      return isSystemText(`${item.platform || ""} ${item.title || ""} ${item.text || ""}`);
     }
 
     function showError(error) {

@@ -111,7 +111,12 @@ public class VisitRecordService {
                 "BROWSER_HISTORY",
                 "browser-history",
                 "browser_history",
-                request.url());
+                request.url(),
+                java.util.Map.of(
+                        "processName", "",
+                        "windowTitle", request.title(),
+                        "domain", domain(request.url()),
+                        "visitCount", 0));
     }
 
     private VisitRecordRequest toVisitRecord(List<String> cells, HeaderIndex header, String importUserId) {
@@ -138,6 +143,15 @@ public class VisitRecordService {
             return host.replaceFirst("^www\\.", "").toLowerCase(Locale.ROOT);
         } catch (IllegalArgumentException e) {
             return "web";
+        }
+    }
+
+    private String domain(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            return host == null ? "" : host.replaceFirst("^www\\.", "").toLowerCase(Locale.ROOT);
+        } catch (IllegalArgumentException e) {
+            return "";
         }
     }
 

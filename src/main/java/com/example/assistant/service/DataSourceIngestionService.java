@@ -61,7 +61,8 @@ public class DataSourceIngestionService {
                 null,
                 "manual-input",
                 "user_input",
-                firstNonBlank(request.title(), request.url(), platform));
+                firstNonBlank(request.title(), request.url(), platform),
+                null);
     }
 
     private ActivityType inferType(DataSourceEventRequest request) {

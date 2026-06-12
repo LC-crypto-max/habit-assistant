@@ -11,9 +11,11 @@ import com.example.assistant.service.ActivityService;
 import com.example.assistant.service.UserContext;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,7 +72,8 @@ public class BehaviorEventService {
                 event.dataLevel(),
                 firstNonBlank(event.source(), "client"),
                 event.detectionReason(),
-                event.matchedKeyword());
+                event.matchedKeyword(),
+                rawEvidence(event));
     }
 
     private BehaviorEventMessage toMessage(String userId, BehaviorEventRequest event, ActivityResponse saved) {
@@ -90,6 +93,10 @@ public class BehaviorEventService {
     }
 
     private ActivityType inferType(BehaviorEventRequest event) {
+        if ("visible-window".equalsIgnoreCase(firstNonBlank(event.source(), ""))
+                || "APP_USAGE_SNAPSHOT".equalsIgnoreCase(firstNonBlank(event.dataLevel(), ""))) {
+            return ActivityType.APP_USAGE;
+        }
         if (!isBlank(event.url())) {
             return ActivityType.VISIT;
         }
@@ -99,6 +106,7 @@ public class BehaviorEventService {
     private String text(BehaviorEventRequest event) {
         return String.join(" ",
                 firstNonBlank(event.title(), ""),
+                firstNonBlank(event.summaryForProfile(), ""),
                 firstNonBlank(event.summary(), ""),
                 firstNonBlank(event.text(), ""),
                 firstNonBlank(event.author(), ""),
@@ -115,7 +123,43 @@ public class BehaviorEventService {
                     .map(String::trim)
                     .forEach(tags::add);
         }
+        if (event.interestTags() != null) {
+            event.interestTags().stream()
+                    .filter(value -> !isBlank(value))
+                    .map(String::trim)
+                    .forEach(tags::add);
+        }
+        addIfPresent(tags, event.contentType());
+        addIfPresent(tags, event.contentCategory());
+        addIfPresent(tags, event.intent());
         return tags.stream().toList();
+    }
+
+    private Map<String, Object> rawEvidence(BehaviorEventRequest event) {
+        Map<String, Object> raw = new LinkedHashMap<>();
+        if (event.rawEvidence() != null) {
+            raw.putAll(event.rawEvidence());
+        }
+        putIfPresent(raw, "contentType", event.contentType());
+        putIfPresent(raw, "contentCategory", event.contentCategory());
+        putIfPresent(raw, "intent", event.intent());
+        putIfPresent(raw, "summaryForProfile", event.summaryForProfile());
+        if (event.recommendationHints() != null && !event.recommendationHints().isEmpty()) {
+            raw.put("recommendationHints", event.recommendationHints());
+        }
+        return raw;
+    }
+
+    private void addIfPresent(Set<String> values, String value) {
+        if (!isBlank(value)) {
+            values.add(value.trim());
+        }
+    }
+
+    private void putIfPresent(Map<String, Object> values, String key, String value) {
+        if (!isBlank(value)) {
+            values.put(key, value.trim());
+        }
     }
 
     private String normalizePlatform(String platform) {

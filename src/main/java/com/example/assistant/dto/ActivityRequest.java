@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 public record ActivityRequest(
         String userId,
@@ -19,5 +20,6 @@ public record ActivityRequest(
         String dataLevel,
         String source,
         String detectionReason,
-        String matchedKeyword) {
+        String matchedKeyword,
+        Map<String, Object> rawEvidence) {
 }

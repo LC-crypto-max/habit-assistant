@@ -60,26 +60,27 @@ def now_iso() -> str:
 def infer_platform(process_name: str, title: str) -> tuple[str, list[str]]:
     process = process_name.lower()
     title_text = title.lower()
+    if any(needle in title_text for needle in ["xiaohongshu", "小红书", "xhs"]):
+        return "xiaohongshu", ["app-usage", "visible-window", "xiaohongshu", "lifestyle"]
+    if any(needle in title_text for needle in ["bilibili", "哔哩", "b站"]):
+        return "bilibili", ["app-usage", "visible-window", "bilibili", "video"]
+    if "youtube" in title_text:
+        return "youtube", ["app-usage", "visible-window", "youtube", "video"]
+    if any(needle in title_text for needle in ["wechat", "微信", "weixin"]):
+        return "wechat", ["app-usage", "visible-window", "wechat", "social"]
+
     browser_rules = [
-        ("browser-edge", ["msedge", "edge"], ["browser", "edge"]),
-        ("browser-chrome", ["chrome"], ["browser", "chrome"]),
+        ("browser", ["msedge", "edge"], ["browser", "edge"]),
+        ("browser", ["chrome"], ["browser", "chrome"]),
         ("browser", ["slbrowser", "sogouexplorer", "firefox"], ["browser"]),
     ]
     for platform, needles, tags in browser_rules:
         if any(needle in process for needle in needles):
-            extra_tags = ["app-usage", *tags]
-            if any(needle in title_text for needle in ["xiaohongshu", "小红书", "xhs"]):
-                extra_tags.extend(["xiaohongshu", "lifestyle"])
-            if any(needle in title_text for needle in ["bilibili", "哔哩", "b站"]):
-                extra_tags.extend(["bilibili", "video"])
-            if "youtube" in title_text:
-                extra_tags.extend(["youtube", "video"])
-            return platform, extra_tags
+            return platform, ["app-usage", "visible-window", *tags]
 
     rules = [
         ("xiaohongshu", ["xiaohongshu", "小红书", "xhs"], ["xiaohongshu", "lifestyle"]),
         ("bilibili", ["bilibili", "哔哩", "b站"], ["bilibili", "video"]),
-        ("douyin", ["douyin", "抖音"], ["douyin", "short-video"]),
         ("wechat", ["wechat", "微信", "weixin"], ["wechat", "social"]),
         ("youtube", ["youtube"], ["youtube", "video"]),
     ]
@@ -174,15 +175,25 @@ def to_behavior_events(apps: list[AppInfo], user_id: str) -> list[dict[str, Any]
             {
                 "userId": user_id,
                 "platform": app.platform,
-                "source": "codex-app-proxy",
+                "source": "visible-window",
                 "externalId": f"{app.process_name}-{app.process_id}",
-                "type": "VISIT",
-                "title": f"正在使用 {app.window_title}",
+                "type": "APP_USAGE",
+                "title": f"Visible app: {app.process_name}",
                 "url": "",
-                "summary": f"本地代理检测到窗口：{app.window_title}",
+                "summary": f"Visible-window snapshot. Window title: {app.window_title}",
                 "text": f"process={app.process_name} pid={app.process_id} title={app.window_title}",
                 "occurredAt": occurred_at,
                 "tags": app.tags,
+                "confidence": "LOW",
+                "dataLevel": "APP_USAGE_SNAPSHOT",
+                "detectionReason": "window_title" if app.window_title else "process_name",
+                "matchedKeyword": app.window_title or app.process_name,
+                "rawEvidence": {
+                    "processName": app.process_name,
+                    "windowTitle": app.window_title,
+                    "domain": "",
+                    "visitCount": 0,
+                },
             }
         )
     return events

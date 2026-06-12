@@ -111,7 +111,8 @@ public class ProfileService {
                         activity.getDataLevel(),
                         activity.getSource(),
                         activity.getDetectionReason(),
-                        activity.getMatchedKeyword()))
+                        activity.getMatchedKeyword(),
+                        Map.of()))
                 .toList();
         return new ProfileResponse(resolvedUserId, terms, activities);
     }
@@ -297,7 +298,8 @@ public class ProfileService {
                 activity.getDataLevel(),
                 activity.getSource(),
                 activity.getDetectionReason(),
-                activity.getMatchedKeyword());
+                activity.getMatchedKeyword(),
+                Map.of());
     }
 
     private String joinText(UserActivity activity) {
@@ -346,6 +348,7 @@ public class ProfileService {
     private double weightFor(ActivityType type) {
         return switch (type) {
             case SEARCH -> 3.0;
+            case APP_USAGE -> 0.2;
             case VISIT -> 1.5;
             case WATCH -> 2.0;
             case LIKE, FAVORITE -> 5.0;

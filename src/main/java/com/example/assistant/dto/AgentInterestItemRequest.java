@@ -4,6 +4,7 @@ import com.example.assistant.model.ActivityType;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 public record AgentInterestItemRequest(
         @NotBlank String platform,
@@ -20,5 +21,12 @@ public record AgentInterestItemRequest(
         String dataLevel,
         String detectionReason,
         String matchedKeyword,
-        List<String> recommendationHints) {
+        List<String> interestTags,
+        List<String> interestLabels,
+        List<String> recommendationHints,
+        String contentType,
+        String contentCategory,
+        String intent,
+        String summaryForProfile,
+        Map<String, Object> rawEvidence) {
 }

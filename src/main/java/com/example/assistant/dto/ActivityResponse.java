@@ -3,6 +3,7 @@ package com.example.assistant.dto;
 import com.example.assistant.model.ActivityType;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 public record ActivityResponse(
         Long id,
@@ -17,5 +18,6 @@ public record ActivityResponse(
         String dataLevel,
         String source,
         String detectionReason,
-        String matchedKeyword) {
+        String matchedKeyword,
+        Map<String, Object> rawEvidence) {
 }
