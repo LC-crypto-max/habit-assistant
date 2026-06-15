@@ -41,6 +41,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from agent_reach_adapter import enrich_public_url
+from llm_gateway import LLMGateway
+from worker_llm_gateway import WorkerLLMGateway
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -53,6 +55,7 @@ DEFAULT_BASE_URL = "http://localhost:8080"
 DEFAULT_ALLOWED_DIRS = ["data/imports", "data/local-notes"]
 SAFE_TEXT_LIMIT = 500
 SUMMARY_TEXT_LIMIT = 420
+CONTENT_TEXT_LIMIT = 1200
 LOCAL_TOOL_DIRS = [
     Path.home() / ".local" / "bin",
     Path(os.environ.get("APPDATA", "")) / "Python" / "Python314" / "Scripts",
@@ -163,6 +166,7 @@ ALLOWED_ITEM_FIELDS = {
     "title",
     "url",
     "author",
+    "contentSnippet",
     "summary",
     "tags",
     "confidence",
@@ -178,16 +182,21 @@ ALLOWED_ITEM_FIELDS = {
     "intent",
     "summaryForProfile",
     "occurredAt",
+    "rawMetadata",
     "rawEvidence",
+    "content",
 }
 ALLOWED_PLATFORMS = {
     "xiaohongshu",
     "youtube",
     "bilibili",
+    "baidu",
+    "baidu_search",
     "wechat",
     "browser",
     "desktop-app",
     "web",
+    "generic_web",
     "github",
 }
 ALLOWED_TYPES = {"VISIT", "WATCH", "SEARCH", "FAVORITE", "APP_USAGE"}
@@ -200,6 +209,20 @@ ALLOWED_DETECTION_REASONS = {
     "browser_history",
     "page_visible_content",
     "public_url_enrichment",
+}
+YOUTUBE_INTEREST_CATEGORIES = {"backend", "AI", "entertainment", "education", "other"}
+TRACKING_QUERY_PARAMS = {
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "source",
+    "from",
+    "feature",
+    "si",
+    "fbclid",
+    "gclid",
 }
 SENSITIVE_FIELD_NAMES = {
     "cookie",
@@ -505,14 +528,14 @@ def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) ->
         '  "items": [\n'
         "    {\n"
         '      "userId": "me",\n'
-        '      "platform": "xiaohongshu | youtube | bilibili | github | wechat | browser | desktop-app | web",\n'
+        '      "platform": "youtube | bilibili | baidu | xiaohongshu | web",\n'
         '      "source": "visible-window | browser-history | page-visit | local-notes | public-url | agent-reach-enrichment | codex-cli-analysis",\n'
         '      "eventType": "VISIT | WATCH | SEARCH | FAVORITE | APP_USAGE",\n'
         '      "externalId": "",\n'
         '      "title": "",\n'
         '      "url": "",\n'
         '      "author": "",\n'
-        '      "summary": "",\n'
+        '      "contentSnippet": "",\n'
         '      "tags": [],\n'
         '      "confidence": "LOW | MEDIUM | HIGH",\n'
         '      "dataLevel": "APP_USAGE_SNAPSHOT | BROWSER_HISTORY | PAGE_VISIBLE_CONTENT | PUBLIC_URL | LOCAL_NOTE",\n'
@@ -526,7 +549,7 @@ def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) ->
         '      "summaryForProfile": "",\n'
         '      "recommendationHints": [],\n'
         '      "occurredAt": "",\n'
-        '      "rawEvidence": {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0}\n'
+        '      "rawMetadata": {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0, "query": ""}\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
@@ -544,8 +567,13 @@ def run_codex_cli(prompt: str, command: str, timeout: int, verbose: bool = False
         print("=" * 72)
         print(prompt)
         print("=" * 72)
+    gateway = LLMGateway(command=command, timeout=timeout, env_provider=tool_env, sanitizer=sanitize)
+    resolved = gateway.resolve_command()
+    if not resolved:
+        raise RuntimeError(f"Codex CLI command not found: {command}")
+    args, shell = resolved
     completed = subprocess.run(
-        split_command(command),
+        args,
         input=prompt,
         capture_output=True,
         text=True,
@@ -553,6 +581,7 @@ def run_codex_cli(prompt: str, command: str, timeout: int, verbose: bool = False
         errors="replace",
         timeout=timeout,
         env=tool_env(),
+        shell=shell,
     )
     if completed.returncode != 0:
         raise RuntimeError(sanitize(completed.stderr or f"Codex CLI exited with {completed.returncode}", 1000))
@@ -567,14 +596,31 @@ def run_codex_cli(prompt: str, command: str, timeout: int, verbose: bool = False
 
 def analyze_with_codex_cli(task: dict[str, Any], raw_items: list[dict[str, Any]], cfg: WorkerConfig) -> list[dict[str, Any]]:
     command = cfg.codex_command or "codex"
+    raw_items = enrich_content_for_llm(raw_items, verbose=cfg.verbose)
     if not find_codex_cli(command):
         verbose_log(cfg.verbose, f"\nCodex CLI command: {command}")
         print(f"Warning: Codex CLI not found for command '{command}'. Falling back to raw_items.", file=sys.stderr)
         return raw_items
 
-    prompt = build_codex_prompt(task, raw_items)
+    youtube_items: list[dict[str, Any]] = []
+    general_items: list[dict[str, Any]] = []
+    for item in raw_items:
+        if is_valid_youtube_event(item):
+            youtube_items.append(item)
+        else:
+            general_items.append(item)
+
+    analyzed_youtube = [
+        analyze_youtube_item_with_codex(item, command, cfg)
+        for item in youtube_items
+    ]
+    if not general_items:
+        verbose_json(cfg.verbose, "Codex analyzed items", analyzed_youtube)
+        return analyzed_youtube
+
+    prompt = build_codex_prompt(task, general_items)
     if cfg.verbose:
-        verbose_json(True, "Codex raw_items", raw_items)
+        verbose_json(True, "Codex raw_items", general_items)
 
     if cfg.print_codex_prompt:
         print("\nCodex prompt")
@@ -600,14 +646,161 @@ def analyze_with_codex_cli(task: dict[str, Any], raw_items: list[dict[str, Any]]
     try:
         decoded = parse_codex_json_output(output)
         analyzed = mark_codex_analysis_items(validate_codex_items(decoded))
-        if has_invented_url(raw_items, analyzed):
+        if has_invented_url(general_items, analyzed):
             raise ValueError("Codex output invented URL for empty raw_items")
     except Exception as exc:
         print(f"Warning: Codex output rejected: {sanitize(exc, 400)}. Falling back to raw_items.", file=sys.stderr)
         return raw_items
-    final_items = analyzed or raw_items
+    final_items = analyzed_youtube + (analyzed or general_items)
     verbose_json(cfg.verbose, "Codex analyzed items", final_items)
     return final_items
+
+
+def is_valid_youtube_event(item: dict[str, Any]) -> bool:
+    if not isinstance(item, dict):
+        return False
+    platform = normalize_platform(item.get("platform"), item)
+    event_type = normalize_event_type(item.get("eventType") or item.get("type"), item)
+    url = normalize_url(item.get("url"))
+    video_id = sanitize(item.get("externalId") or external_id_from_url(platform, url), 160)
+    return platform == "youtube" and event_type in {"WATCH", "VISIT", "FAVORITE"} and bool(url or video_id)
+
+
+def youtube_context_from_item(item: dict[str, Any]) -> dict[str, str]:
+    content = content_from_item(item)
+    url = normalize_url(item.get("url"))
+    video_id = sanitize(item.get("externalId") or external_id_from_url("youtube", url), 160)
+    raw_metadata = item.get("rawMetadata") if isinstance(item.get("rawMetadata"), dict) else {}
+    raw_evidence = item.get("rawEvidence") if isinstance(item.get("rawEvidence"), dict) else {}
+    description = sanitize(
+        content.get("description")
+        or item.get("description")
+        or item.get("contentSnippet")
+        or item.get("summary")
+        or raw_metadata.get("description")
+        or raw_evidence.get("description")
+        or "",
+        CONTENT_TEXT_LIMIT,
+    )
+    return {
+        "title": sanitize(content.get("title") or item.get("title") or "", 300),
+        "description": description,
+        "author": sanitize(content.get("author") or item.get("author") or "", 160),
+        "url": normalize_url(content.get("url") or url),
+        "videoId": sanitize(content.get("externalId") or content.get("videoId") or video_id, 160),
+    }
+
+
+def build_youtube_analysis_prompt(context: dict[str, str]) -> str:
+    safe_context = {key: sanitize(value, 1200 if key == "description" else 300) for key, value in context.items()}
+    return (
+        "SYSTEM TASK:\n"
+        "You are analyzing a user's YouTube viewing behavior to build an interest profile.\n\n"
+        "INPUT:\n"
+        "- video title\n"
+        "- description\n"
+        "- channel\n"
+        "- url\n\n"
+        "OUTPUT JSON ONLY:\n"
+        "{\n"
+        '  "summary": "...",\n'
+        '  "tags": ["tag1","tag2","tag3"],\n'
+        '  "interestCategory": "backend | AI | entertainment | education | other",\n'
+        '  "confidence": "HIGH | MEDIUM | LOW"\n'
+        "}\n\n"
+        "RULES:\n"
+        "- tags must reflect content meaning, not system labels\n"
+        "- summary must describe what the video is about\n"
+        "- do NOT include sensitive inference (health, identity, etc.)\n"
+        "- max 5 tags\n"
+        "- output must be strict JSON\n\n"
+        "PUBLIC YOUTUBE CONTEXT:\n"
+        f"{json.dumps(safe_context, ensure_ascii=False, indent=2)}\n"
+    )
+
+
+def analyze_youtube_item_with_codex(item: dict[str, Any], command: str, cfg: WorkerConfig) -> dict[str, Any]:
+    context = youtube_context_from_item(item)
+    verbose_json(cfg.verbose, "YouTube public context for Codex", context)
+    prompt = build_youtube_analysis_prompt(context)
+    try:
+        output = run_codex_cli(prompt, command, cfg.codex_timeout, verbose=cfg.verbose)
+        analysis = validate_youtube_analysis(parse_codex_json_output(output))
+        return apply_youtube_analysis(item, context, analysis)
+    except subprocess.TimeoutExpired:
+        print("Warning: YouTube Codex analysis timed out. Falling back to metadata item.", file=sys.stderr)
+    except Exception as exc:
+        print(f"Warning: YouTube Codex analysis failed: {sanitize(exc, 400)}. Falling back to metadata item.", file=sys.stderr)
+    return sanitize_item(item, allow_sensitive_check=True)
+
+
+def validate_youtube_analysis(decoded: dict[str, Any]) -> dict[str, Any]:
+    if has_sensitive_field(decoded):
+        raise ValueError("sensitive field name found")
+    if contains_sensitive(json.dumps(decoded, ensure_ascii=False)):
+        raise ValueError("sensitive content found")
+    summary = sanitize(decoded.get("summary") or "", SUMMARY_TEXT_LIMIT)
+    if not summary:
+        raise ValueError("summary is required")
+    tags_value = decoded.get("tags")
+    if not isinstance(tags_value, list):
+        raise ValueError("tags must be a list")
+    tags = unique_values([sanitize(tag, 80) for tag in tags_value if sanitize(tag, 80)])[:5]
+    tags = [tag for tag in tags if tag.lower() not in {"youtube", "video", "public-url", "agent-reach", "browser-history"}]
+    category = sanitize(decoded.get("interestCategory") or "other", 40)
+    if category not in YOUTUBE_INTEREST_CATEGORIES:
+        category = "other"
+    confidence = normalize_choice(decoded.get("confidence"), ALLOWED_CONFIDENCE, "MEDIUM")
+    return {
+        "summary": summary,
+        "tags": tags,
+        "interestCategory": category,
+        "confidence": confidence,
+    }
+
+
+def apply_youtube_analysis(item: dict[str, Any], context: dict[str, str], analysis: dict[str, Any]) -> dict[str, Any]:
+    raw_evidence = sanitize_raw_evidence(item.get("rawMetadata") or item.get("rawEvidence"))
+    raw_evidence["domain"] = "youtube.com"
+    raw_evidence["externalId"] = context["videoId"]
+    raw_evidence["url"] = context["url"]
+    raw_evidence["contentSnippet"] = analysis["summary"]
+    raw_evidence["contentType"] = "video"
+    raw_evidence["interestCategory"] = analysis["interestCategory"]
+    raw_evidence["contentCategory"] = analysis["interestCategory"]
+    raw_evidence["originalSource"] = sanitize(item.get("source") or "", 120)
+    raw_evidence["content"] = content_from_item(item)
+    enriched = {
+        **item,
+        "platform": "youtube",
+        "source": "codex-cli-analysis",
+        "eventType": "WATCH",
+        "type": "WATCH",
+        "externalId": context["videoId"],
+        "title": context["title"],
+        "url": context["url"],
+        "author": context["author"],
+        "contentSnippet": analysis["summary"],
+        "summary": analysis["summary"],
+        "tags": analysis["tags"],
+        "interestTags": analysis["tags"],
+        "interestLabels": analysis["tags"],
+        "contentType": "video",
+        "interestCategory": analysis["interestCategory"],
+        "contentCategory": analysis["interestCategory"],
+        "confidence": analysis["confidence"],
+        "dataLevel": "PAGE_VISIBLE_CONTENT",
+        "detectionReason": "public_url_enrichment",
+        "matchedKeyword": context["videoId"] or "youtube.com",
+        "rawMetadata": raw_evidence,
+        "rawEvidence": raw_evidence,
+    }
+    sanitized = sanitize_item(enriched, allow_sensitive_check=True)
+    content_tags = unique_values(analysis["tags"])[:5]
+    sanitized["tags"] = content_tags
+    sanitized["interestTags"] = content_tags
+    sanitized["interestLabels"] = content_tags
+    return sanitized
 
 
 def parse_codex_json_output(output: str) -> dict[str, Any]:
@@ -638,6 +831,258 @@ def parse_codex_json_output(output: str) -> dict[str, Any]:
 
 def extract_json_object(output: str) -> dict[str, Any]:
     return parse_codex_json_output(output)
+
+
+def enrich_content_for_llm(items: list[dict[str, Any]], verbose: bool = False) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        content = build_structured_content_object(item)
+        updated = attach_content_object(item, content)
+        verbose_json(verbose, "Structured content object for LLM", content)
+        enriched.append(updated)
+    return enriched
+
+
+def attach_content_object(item: dict[str, Any], content: dict[str, Any]) -> dict[str, Any]:
+    raw_evidence = sanitize_raw_evidence(item.get("rawMetadata") or item.get("rawEvidence"))
+    raw_evidence["content"] = content
+    raw_evidence["contentType"] = sanitize(content.get("contentType") or raw_evidence.get("contentType") or "", 80)
+    if content.get("url"):
+        raw_evidence["url"] = sanitize(content.get("url"), 600)
+    if content.get("externalId"):
+        raw_evidence["externalId"] = sanitize(content.get("externalId"), 160)
+    if content.get("summary"):
+        raw_evidence["contentSnippet"] = sanitize(content.get("summary"), SUMMARY_TEXT_LIMIT)
+    updated = dict(item)
+    updated["rawMetadata"] = raw_evidence
+    updated["rawEvidence"] = raw_evidence
+    if not updated.get("contentSnippet") and content.get("summary"):
+        updated["contentSnippet"] = sanitize(content.get("summary"), SUMMARY_TEXT_LIMIT)
+        updated["summary"] = updated["contentSnippet"]
+    if not updated.get("title") and content.get("title"):
+        updated["title"] = sanitize(content.get("title"), 300)
+    if not updated.get("author") and content.get("author"):
+        updated["author"] = sanitize(content.get("author"), 160)
+    return updated
+
+
+def content_from_item(item: dict[str, Any]) -> dict[str, Any]:
+    direct = item.get("content")
+    if isinstance(direct, dict):
+        return sanitize_content_object(direct)
+    for key in ("rawMetadata", "rawEvidence"):
+        raw = item.get(key)
+        if isinstance(raw, dict) and isinstance(raw.get("content"), dict):
+            return sanitize_content_object(raw["content"])
+    return build_structured_content_object(item)
+
+
+def build_structured_content_object(item: dict[str, Any]) -> dict[str, Any]:
+    existing = existing_content_object(item)
+    if existing:
+        return existing
+    platform = normalize_platform(item.get("platform"), item)
+    url = normalize_url(item.get("url"))
+    external_id = sanitize(item.get("externalId") or external_id_from_url(platform, url), 160)
+    if platform == "youtube":
+        return build_youtube_content_object(item, url, external_id)
+    if platform == "bilibili":
+        return build_video_content_object(item, "bilibili", url, external_id)
+    if platform == "xiaohongshu":
+        return build_xiaohongshu_content_object(item, url, external_id)
+    if url:
+        return build_web_page_content_object(item, platform, url, external_id)
+    return sanitize_content_object({
+        "platform": platform,
+        "source": "content-enrichment",
+        "contentType": sanitize(item.get("contentType") or "event", 80),
+        "url": "",
+        "externalId": external_id,
+        "title": item.get("title") or "",
+        "author": item.get("author") or "",
+        "description": item.get("contentSnippet") or item.get("summary") or "",
+        "bodyText": item.get("text") or "",
+        "summary": item.get("contentSnippet") or item.get("summary") or "",
+        "transcript": "",
+        "dataLevel": item.get("dataLevel") or "APP_USAGE_SNAPSHOT",
+        "fetchedBy": "local-event-fields",
+    })
+
+
+def existing_content_object(item: dict[str, Any]) -> dict[str, Any]:
+    direct = item.get("content")
+    if isinstance(direct, dict) and has_content_payload(direct):
+        return sanitize_content_object(direct)
+    for key in ("rawMetadata", "rawEvidence"):
+        raw = item.get(key)
+        if isinstance(raw, dict) and isinstance(raw.get("content"), dict) and has_content_payload(raw["content"]):
+            return sanitize_content_object(raw["content"])
+    return {}
+
+
+def has_content_payload(value: dict[str, Any]) -> bool:
+    return bool(value.get("title") or value.get("description") or value.get("bodyText") or value.get("transcript"))
+
+
+def build_youtube_content_object(item: dict[str, Any], url: str, external_id: str) -> dict[str, Any]:
+    fetched = fetch_video_content_with_ytdlp("youtube", url) if url and needs_public_fetch(item) else {}
+    description = (
+        fetched.get("description")
+        or item.get("description")
+        or item.get("contentSnippet")
+        or item.get("summary")
+        or raw_field(item, "description")
+        or ""
+    )
+    transcript = fetched.get("transcript") or raw_field(item, "transcript")
+    return sanitize_content_object({
+        "platform": "youtube",
+        "source": "content-enrichment",
+        "contentType": "video",
+        "url": fetched.get("url") or url,
+        "externalId": fetched.get("externalId") or external_id,
+        "videoId": fetched.get("externalId") or external_id,
+        "title": fetched.get("title") or item.get("title") or "",
+        "author": fetched.get("author") or item.get("author") or "",
+        "description": description,
+        "bodyText": description,
+        "summary": summarize_public_description(description, item.get("title") or ""),
+        "transcript": transcript,
+        "transcriptAvailable": bool(transcript or fetched.get("transcriptAvailable")),
+        "dataLevel": "PAGE_VISIBLE_CONTENT" if fetched else item.get("dataLevel") or "PUBLIC_URL",
+        "fetchedBy": fetched.get("fetchedBy") or "event-public-metadata",
+    })
+
+
+def build_video_content_object(item: dict[str, Any], platform: str, url: str, external_id: str) -> dict[str, Any]:
+    fetched = fetch_video_content_with_ytdlp(platform, url) if url and needs_public_fetch(item) else {}
+    description = fetched.get("description") or item.get("contentSnippet") or item.get("summary") or ""
+    return sanitize_content_object({
+        "platform": platform,
+        "source": "content-enrichment",
+        "contentType": "video",
+        "url": fetched.get("url") or url,
+        "externalId": fetched.get("externalId") or external_id,
+        "title": fetched.get("title") or item.get("title") or "",
+        "author": fetched.get("author") or item.get("author") or "",
+        "description": description,
+        "bodyText": description,
+        "summary": summarize_public_description(description, item.get("title") or ""),
+        "transcript": fetched.get("transcript") or "",
+        "transcriptAvailable": bool(fetched.get("transcriptAvailable")),
+        "dataLevel": "PAGE_VISIBLE_CONTENT" if fetched else item.get("dataLevel") or "PUBLIC_URL",
+        "fetchedBy": fetched.get("fetchedBy") or "event-public-metadata",
+    })
+
+
+def build_xiaohongshu_content_object(item: dict[str, Any], url: str, external_id: str) -> dict[str, Any]:
+    text = item.get("contentSnippet") or item.get("summary") or raw_field(item, "contentSnippet") or ""
+    return sanitize_content_object({
+        "platform": "xiaohongshu",
+        "source": "content-enrichment",
+        "contentType": "note",
+        "url": url,
+        "externalId": external_id,
+        "noteId": external_id,
+        "title": item.get("title") or "",
+        "author": item.get("author") or "",
+        "description": text,
+        "bodyText": text,
+        "summary": text,
+        "transcript": "",
+        "dataLevel": item.get("dataLevel") or "PUBLIC_URL",
+        "fetchedBy": "agent-reach-or-event-public-fields",
+    })
+
+
+def build_web_page_content_object(item: dict[str, Any], platform: str, url: str, external_id: str) -> dict[str, Any]:
+    text = item.get("contentSnippet") or item.get("summary") or raw_field(item, "contentSnippet") or ""
+    return sanitize_content_object({
+        "platform": "web" if platform in {"browser", "generic_web"} else platform,
+        "source": "content-enrichment",
+        "contentType": sanitize(item.get("contentType") or "web-page", 80),
+        "url": url,
+        "externalId": external_id,
+        "title": item.get("title") or "",
+        "author": item.get("author") or "",
+        "description": text,
+        "bodyText": text,
+        "summary": text,
+        "transcript": "",
+        "dataLevel": item.get("dataLevel") or "PUBLIC_URL",
+        "fetchedBy": "agent-reach-or-event-public-fields",
+    })
+
+
+def fetch_video_content_with_ytdlp(platform: str, url: str) -> dict[str, Any]:
+    if not find_tool("yt-dlp"):
+        return {}
+    try:
+        completed = subprocess.run(
+            ["yt-dlp", "--dump-json", "--skip-download", url],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=40,
+            env=tool_env(),
+        )
+        data = json.loads(completed.stdout)
+    except Exception as exc:
+        print(f"Warning: content enrichment metadata fetch failed: {sanitize(exc, 300)}", file=sys.stderr)
+        return {}
+    webpage_url = normalize_url(data.get("webpage_url") or url)
+    transcript_available = bool(data.get("subtitles") or data.get("automatic_captions"))
+    return {
+        "platform": platform,
+        "url": webpage_url,
+        "externalId": sanitize(data.get("id") or external_id_from_url(platform, webpage_url), 160),
+        "title": sanitize(data.get("title") or "", 300),
+        "author": sanitize(data.get("uploader") or data.get("channel") or "", 160),
+        "description": sanitize(data.get("description") or "", CONTENT_TEXT_LIMIT),
+        "transcript": sanitize(data.get("transcript") or "", CONTENT_TEXT_LIMIT),
+        "transcriptAvailable": transcript_available,
+        "fetchedBy": "yt-dlp-public-metadata",
+    }
+
+
+def needs_public_fetch(item: dict[str, Any]) -> bool:
+    content = item.get("content")
+    if isinstance(content, dict) and (content.get("title") or content.get("description") or content.get("bodyText")):
+        return False
+    return not (item.get("title") and (item.get("description") or item.get("contentSnippet") or item.get("summary")))
+
+
+def raw_field(item: dict[str, Any], key: str) -> str:
+    for raw_key in ("rawMetadata", "rawEvidence"):
+        raw = item.get(raw_key)
+        if isinstance(raw, dict) and raw.get(key) is not None:
+            return sanitize(raw.get(key), CONTENT_TEXT_LIMIT)
+    return ""
+
+
+def sanitize_content_object(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "platform": sanitize(value.get("platform") or "", 80),
+        "source": sanitize(value.get("source") or "content-enrichment", 80),
+        "contentType": sanitize(value.get("contentType") or "", 80),
+        "url": normalize_url(value.get("url")),
+        "externalId": sanitize(value.get("externalId") or value.get("videoId") or value.get("noteId") or "", 160),
+        "videoId": sanitize(value.get("videoId") or value.get("externalId") or "", 160),
+        "noteId": sanitize(value.get("noteId") or value.get("externalId") or "", 160),
+        "title": sanitize(value.get("title") or "", 300),
+        "author": sanitize(value.get("author") or "", 160),
+        "description": sanitize(value.get("description") or "", CONTENT_TEXT_LIMIT),
+        "bodyText": sanitize(value.get("bodyText") or value.get("description") or "", CONTENT_TEXT_LIMIT),
+        "summary": sanitize(value.get("summary") or value.get("description") or "", SUMMARY_TEXT_LIMIT),
+        "transcript": sanitize(value.get("transcript") or "", CONTENT_TEXT_LIMIT),
+        "transcriptAvailable": bool(value.get("transcriptAvailable")),
+        "dataLevel": sanitize(value.get("dataLevel") or "PUBLIC_URL", 80),
+        "fetchedBy": sanitize(value.get("fetchedBy") or "", 120),
+    }
 
 
 def validate_codex_items(decoded: dict[str, Any]) -> list[dict[str, Any]]:
@@ -690,6 +1135,11 @@ def sanitize_raw_evidence(value: Any) -> dict[str, Any]:
         "windowTitle": sanitize(value.get("windowTitle") or "", 240),
         "domain": sanitize(value.get("domain") or "", 160),
         "visitCount": 0,
+        "query": sanitize(value.get("query") or "", 240),
+        "url": sanitize(value.get("url") or "", 600),
+        "externalId": sanitize(value.get("externalId") or "", 160),
+        "videoId": sanitize(value.get("videoId") or value.get("externalId") or "", 160),
+        "contentSnippet": sanitize(value.get("contentSnippet") or "", SUMMARY_TEXT_LIMIT),
         "adapter": sanitize(value.get("adapter") or "", 80),
         "adapterMode": sanitize(value.get("adapterMode") or "", 80),
         "agentReachCommand": sanitize(value.get("agentReachCommand") or "", 500),
@@ -699,6 +1149,8 @@ def sanitize_raw_evidence(value: Any) -> dict[str, Any]:
         "contentCategory": sanitize(value.get("contentCategory") or value.get("interestCategory") or "", 120),
         "intent": sanitize(value.get("intent") or "", 120),
     }
+    if isinstance(value.get("content"), dict):
+        safe["content"] = sanitize_content_object(value["content"])
     try:
         safe["visitCount"] = max(0, int(value.get("visitCount") or 0))
     except (TypeError, ValueError):
@@ -714,6 +1166,52 @@ def domain_from_url(url: str) -> str:
         return host.lower().removeprefix("www.")
     except ValueError:
         return ""
+
+
+def normalize_url(value: Any) -> str:
+    url = sanitize(value or "", 600).strip()
+    if not url:
+        return ""
+    if url.startswith("www."):
+        url = "https://" + url
+    if not url.startswith(("http://", "https://")):
+        return url
+    try:
+        parsed = urllib.parse.urlparse(url)
+        query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        cleaned_query = urllib.parse.urlencode(
+            [(key, value) for key, value in query if key.lower() not in TRACKING_QUERY_PARAMS],
+            doseq=True,
+        )
+        return urllib.parse.urlunparse((
+            "https",
+            parsed.netloc.lower(),
+            parsed.path or "",
+            "",
+            cleaned_query,
+            "",
+        ))
+    except ValueError:
+        return ""
+
+
+def external_id_from_url(platform: str, url: str) -> str:
+    if not url:
+        return ""
+    if platform == "youtube":
+        parsed = urllib.parse.urlparse(url)
+        query = urllib.parse.parse_qs(parsed.query)
+        if query.get("v"):
+            return sanitize(query["v"][0], 160)
+        if "youtu.be" in parsed.netloc:
+            return sanitize(parsed.path.strip("/").split("/")[0], 160)
+    if platform == "bilibili":
+        match = re.search(r"/video/((?:BV|av)[A-Za-z0-9]+)", url, flags=re.IGNORECASE)
+        return sanitize(match.group(1), 160) if match else ""
+    if platform == "xiaohongshu":
+        match = re.search(r"/(?:explore|discovery/item)/([A-Za-z0-9_-]+)", url)
+        return sanitize(match.group(1), 160) if match else ""
+    return ""
 
 
 def has_keyword(text: str, *keywords: str) -> bool:
@@ -801,7 +1299,7 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
     else:
         safe_hints = []
 
-    raw_evidence = sanitize_raw_evidence(filtered.get("rawEvidence"))
+    raw_evidence = sanitize_raw_evidence(filtered.get("rawMetadata") or filtered.get("rawEvidence"))
     if raw_evidence:
         filtered = {**filtered, "rawEvidence": raw_evidence}
     content_type = sanitize(filtered.get("contentType") or raw_evidence.get("contentType") or "", 80)
@@ -827,6 +1325,8 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
     source = normalize_source(filtered.get("source"), filtered)
     platform = normalize_platform(filtered.get("platform"), filtered)
     event_type = normalize_event_type(filtered.get("eventType") or filtered.get("type"), filtered)
+    url = normalize_url(filtered.get("url"))
+    external_id = sanitize(filtered.get("externalId") or external_id_from_url(platform, url), 160)
     confidence = normalize_choice(filtered.get("confidence"), ALLOWED_CONFIDENCE, default_confidence(filtered))
     data_level = normalize_choice(filtered.get("dataLevel"), ALLOWED_DATA_LEVELS, default_data_level(filtered))
     detection_reason = normalize_choice(
@@ -836,7 +1336,15 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
     )
     safe_labels = unique_values([*safe_labels, *safe_interest_tags, *infer_interest_labels(filtered)])[:8]
     safe_tags = unique_values([*safe_tags, *safe_interest_tags, *safe_labels, content_type, content_category])[:12]
-    summary = sanitize(summary_for_profile or filtered.get("summary") or "", SUMMARY_TEXT_LIMIT)
+    summary = sanitize(summary_for_profile or filtered.get("contentSnippet") or filtered.get("summary") or "", SUMMARY_TEXT_LIMIT)
+    if summary:
+        raw_evidence["contentSnippet"] = summary
+    if url:
+        raw_evidence["url"] = url
+    if external_id:
+        raw_evidence["externalId"] = external_id
+    if platform == "baidu" and event_type == "SEARCH" and not raw_evidence.get("query"):
+        raw_evidence["query"] = sanitize(filtered.get("matchedKeyword") or filtered.get("title") or "", 240)
 
     return {
         "userId": sanitize(filtered.get("userId") or "", 120),
@@ -844,10 +1352,11 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
         "source": source,
         "eventType": event_type,
         "type": event_type,
-        "externalId": sanitize(filtered.get("externalId") or "", 160),
+        "externalId": external_id,
         "title": sanitize(filtered.get("title") or "", 300),
-        "url": sanitize(filtered.get("url") or "", 600),
+        "url": url,
         "author": sanitize(filtered.get("author") or "", 160),
+        "contentSnippet": summary,
         "summary": summary,
         "tags": safe_tags[:12],
         "confidence": confidence,
@@ -863,12 +1372,13 @@ def sanitize_item(item: dict[str, Any], allow_sensitive_check: bool = True) -> d
         "intent": item_intent,
         "summaryForProfile": summary_for_profile,
         "occurredAt": dto_local_datetime(filtered.get("occurredAt")),
+        "rawMetadata": raw_evidence,
         "rawEvidence": raw_evidence,
     }
 
 
 def normalize_platform(value: Any, item: dict[str, Any]) -> str:
-    platform = sanitize(value or "", 80).strip().lower()
+    platform = sanitize(value or "", 80).strip().lower().replace("-", "_")
     url = str(item.get("url") or "")
     domain = domain_from_url(url)
     title_haystack = " ".join([
@@ -883,10 +1393,14 @@ def normalize_platform(value: Any, item: dict[str, Any]) -> str:
         return "bilibili"
     if domain.endswith("youtube.com") or domain.endswith("youtu.be") or has_keyword(title_haystack, "youtube"):
         return "youtube"
+    if domain.endswith("baidu.com") or platform == "baidu_search" or has_keyword(title_haystack, "baidu", "百度"):
+        return "baidu"
     if domain.endswith("github.com") or has_keyword(title_haystack, "github"):
         return "github"
     if domain.endswith("weixin.qq.com") or has_keyword(title_haystack, "wechat", "微信", "weixin"):
         return "wechat"
+    if platform == "generic_web":
+        return "web"
     if platform in ALLOWED_PLATFORMS:
         return platform
     return "web" if url.startswith(("http://", "https://")) else "desktop-app"
@@ -975,7 +1489,7 @@ def default_detection_reason(item: dict[str, Any]) -> str:
 
 
 def collect_task(task: dict[str, Any], cfg: WorkerConfig) -> list[dict[str, Any]]:
-    platform = str(task.get("platform") or "").lower()
+    platform = str(task.get("platform") or "").lower().replace("-", "_")
     intent = str(task.get("intent") or "").lower()
     query = task.get("query") or ""
     url = task.get("url") or ""
@@ -993,7 +1507,9 @@ def collect_task(task: dict[str, Any], cfg: WorkerConfig) -> list[dict[str, Any]
         return collect_youtube(str(url), str(query))
     if platform in {"xiaohongshu", "xhs"}:
         return collect_xiaohongshu(str(url), str(query), cfg.limit)
-    if platform in {"web", "browser"} or intent in {"read-page", "browser-history-summary"}:
+    if platform in {"baidu", "baidu_search"} or intent in {"baidu-search", "search"}:
+        return collect_baidu_search(str(query), str(url))
+    if platform in {"web", "generic_web", "browser"} or intent in {"read-page", "browser-history-summary"}:
         return collect_browser_or_public_url(str(url), str(query), cfg.limit)
 
     return [{
@@ -1214,6 +1730,33 @@ def collect_youtube(url: str, query: str) -> list[dict[str, Any]]:
     return []
 
 
+def collect_baidu_search(query: str, url: str = "") -> list[dict[str, Any]]:
+    safe_query = sanitize(query or "", 240)
+    search_url = normalize_url(url)
+    if not search_url and safe_query:
+        search_url = "https://www.baidu.com/s?wd=" + urllib.parse.quote(safe_query)
+    return [{
+        "platform": "baidu_search",
+        "source": "public-url",
+        "eventType": "SEARCH",
+        "type": "SEARCH",
+        "externalId": "",
+        "title": safe_query or "Baidu search",
+        "url": search_url,
+        "author": "",
+        "contentSnippet": f"Baidu search query: {safe_query}" if safe_query else "Baidu search query",
+        "summary": f"Baidu search query: {safe_query}" if safe_query else "Baidu search query",
+        "tags": unique_values(["baidu", "search", *infer_tags("baidu", safe_query)]),
+        "confidence": "MEDIUM",
+        "dataLevel": "PUBLIC_URL",
+        "detectionReason": "url_domain",
+        "matchedKeyword": safe_query,
+        "occurredAt": dto_local_datetime(),
+        "rawMetadata": {"processName": "", "windowTitle": safe_query, "domain": "baidu.com", "visitCount": 0, "query": safe_query},
+        "rawEvidence": {"processName": "", "windowTitle": safe_query, "domain": "baidu.com", "visitCount": 0, "query": safe_query},
+    }]
+
+
 def collect_xiaohongshu(url: str, query: str, limit: int) -> list[dict[str, Any]]:
     if url.startswith(("http://", "https://")):
         items = collect_browser_or_public_url(url, query, limit)
@@ -1341,23 +1884,105 @@ def collect_video_metadata(platform: str, url: str) -> list[dict[str, Any]]:
         env=tool_env(),
     )
     data = json.loads(completed.stdout)
+    webpage_url = normalize_url(data.get("webpage_url") or url)
+    video_id = sanitize(data.get("id") or external_id_from_url(platform, webpage_url), 160)
+    title = sanitize(data.get("title") or "", 300)
+    description = sanitize(data.get("description") or "", 1200)
+    author = sanitize(data.get("uploader") or data.get("channel") or "", 160)
+    if platform == "youtube":
+        tags = infer_content_tags(title, description)
+        summary = summarize_public_description(description, title)
+        interest_category = infer_interest_category(title, description)
+        raw_evidence = {
+            "processName": "",
+            "windowTitle": "",
+            "domain": domain_from_url(webpage_url),
+            "visitCount": 0,
+            "videoId": video_id,
+            "externalId": video_id,
+            "url": webpage_url,
+            "description": description,
+            "contentType": "video",
+            "interestCategory": interest_category,
+        }
+        return [{
+            "platform": "youtube",
+            "source": "public-url",
+            "eventType": "WATCH",
+            "type": "WATCH",
+            "externalId": video_id,
+            "title": title,
+            "url": webpage_url,
+            "author": author,
+            "description": description,
+            "contentSnippet": summary,
+            "summary": summary,
+            "tags": tags,
+            "interestTags": tags,
+            "contentType": "video",
+            "interestCategory": interest_category,
+            "contentCategory": interest_category,
+            "confidence": "MEDIUM",
+            "dataLevel": "PUBLIC_URL",
+            "detectionReason": "url_domain",
+            "matchedKeyword": video_id or "youtube.com",
+            "occurredAt": dto_local_datetime(),
+            "rawMetadata": raw_evidence,
+            "rawEvidence": raw_evidence,
+        }]
     return [{
         "platform": platform,
         "source": "public-url",
         "type": "WATCH",
-        "externalId": sanitize(data.get("id") or ""),
-        "title": sanitize(data.get("title") or ""),
-        "url": sanitize(data.get("webpage_url") or url),
-        "author": sanitize(data.get("uploader") or data.get("channel") or ""),
-        "summary": sanitize(data.get("description") or "", 420),
-        "tags": infer_tags(platform, data.get("title"), data.get("description")),
+        "externalId": video_id,
+        "title": title,
+        "url": webpage_url,
+        "author": author,
+        "summary": sanitize(description, 420),
+        "tags": infer_tags(platform, title, description),
         "confidence": "MEDIUM",
         "dataLevel": "PUBLIC_URL",
         "detectionReason": "url_domain",
-        "matchedKeyword": sanitize(data.get("id") or platform, 120),
+        "matchedKeyword": sanitize(video_id or platform, 120),
         "occurredAt": dto_local_datetime(),
-        "rawEvidence": {"processName": "", "windowTitle": "", "domain": domain_from_url(str(data.get("webpage_url") or url)), "visitCount": 0},
+        "rawEvidence": {"processName": "", "windowTitle": "", "domain": domain_from_url(webpage_url), "visitCount": 0},
     }]
+
+
+def summarize_public_description(description: str, title: str) -> str:
+    text = sanitize(description or title, SUMMARY_TEXT_LIMIT)
+    if not text:
+        return "Public YouTube video metadata was fetched for interest analysis."
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines[:5])[:SUMMARY_TEXT_LIMIT]
+
+
+def infer_content_tags(title: str, description: str) -> list[str]:
+    text = f"{title} {description}".lower()
+    rules = [
+        ("spring boot", ["spring boot", "spring"]),
+        ("java", ["java", "jvm"]),
+        ("backend", ["backend", "redis", "mysql", "database", "api", "server"]),
+        ("ai", [" ai ", "llm", "agent", "chatgpt", "codex", "machine learning"]),
+        ("tutorial", ["tutorial", "course", "lesson", "guide", "how to"]),
+        ("music", ["music", "song", "live", "album"]),
+        ("gaming", ["game", "gaming", "playthrough"]),
+    ]
+    tags = [tag for tag, needles in rules if any(needle in f" {text} " for needle in needles)]
+    return unique_values(tags)[:5] or ["education"]
+
+
+def infer_interest_category(title: str, description: str) -> str:
+    text = f"{title} {description}".lower()
+    if any(word in text for word in ["spring", "java", "redis", "mysql", "backend", "api", "database"]):
+        return "backend"
+    if any(word in text for word in ["ai", "llm", "agent", "chatgpt", "codex", "machine learning"]):
+        return "AI"
+    if any(word in text for word in ["tutorial", "course", "lesson", "lecture", "education"]):
+        return "education"
+    if any(word in text for word in ["music", "movie", "game", "comedy", "entertainment"]):
+        return "entertainment"
+    return "other"
 
 
 def collect_browser_or_public_url(url: str, query: str, limit: int) -> list[dict[str, Any]]:
@@ -1439,11 +2064,16 @@ def run_once(cfg: WorkerConfig) -> int:
         verbose_json(cfg.verbose, "Collected raw items", collected_items)
         raw_items = enrich_public_url_items(collected_items)
         verbose_json(cfg.verbose, "Agent Reach enriched items", raw_items)
-        if cfg.use_codex_cli:
-            analyzed_items = analyze_with_codex_cli(task, raw_items, cfg)
-        else:
-            verbose_log(cfg.verbose, "\nCodex CLI disabled. Use --use-codex-cli to enable analysis.")
-            analyzed_items = raw_items
+        raw_items = enrich_content_for_llm(raw_items, verbose=cfg.verbose)
+        verbose_json(cfg.verbose, "Content enriched items", raw_items)
+        llm_gateway = WorkerLLMGateway(
+            command=cfg.codex_command,
+            timeout=cfg.codex_timeout,
+            env_provider=tool_env,
+            sanitizer=sanitize,
+        )
+        llm_gateway.submit_events(raw_items)
+        analyzed_items = raw_items
         result = build_result(analyzed_items)
         verbose_json(cfg.verbose, "behavior_event JSON", {"events": result["items"]})
         if cfg.direct_behavior_batch:
@@ -1453,6 +2083,8 @@ def run_once(cfg: WorkerConfig) -> int:
             if cfg.direct_behavior_batch:
                 print(json.dumps({"events": result["items"]}, ensure_ascii=False, indent=2))
             print(json.dumps(result, ensure_ascii=False, indent=2))
+            llm_gateway.wait()
+            llm_gateway.shutdown()
             return 0
         if cfg.direct_behavior_batch:
             result.setdefault("metadata", {})["behaviorBatchResponse"] = post_behavior_batch(
@@ -1460,6 +2092,8 @@ def run_once(cfg: WorkerConfig) -> int:
         response = complete_task(cfg.base_url, task_id, result)
         verbose_json(cfg.verbose, "Task completion response", response)
         print(json.dumps(response, ensure_ascii=False, indent=2))
+        llm_gateway.wait()
+        llm_gateway.shutdown()
         return 0
     except Exception as exc:
         payload = {"success": False, "errorMessage": sanitize(str(exc), 1000)}
@@ -1481,7 +2115,8 @@ def parse_args() -> WorkerConfig:
     parser.add_argument("--allowed-dir", action="append", default=[], help="Allowed local directory. Can be repeated.")
     parser.add_argument("--limit", type=int, default=20, help="Maximum items returned by a collector.")
     parser.add_argument("--poll-seconds", type=float, default=10.0, help="Polling interval when running continuously.")
-    parser.add_argument("--use-codex-cli", action="store_true", help="Analyze collected raw items with Codex CLI before callback.")
+    parser.add_argument("--use-codex-cli", action="store_true",
+                        help="Compatibility flag. Real-time Codex/LLM analysis is triggered automatically per event.")
     parser.add_argument("--codex-command", default="codex", help="Codex CLI command. Defaults to 'codex'.")
     parser.add_argument("--print-codex-prompt", action="store_true", help="Print the prompt sent to Codex CLI.")
     parser.add_argument("--print-codex-output", action="store_true", help="Print raw Codex CLI output.")

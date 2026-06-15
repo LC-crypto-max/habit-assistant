@@ -21,6 +21,7 @@ PLATFORM_DOMAINS: dict[str, tuple[str, ...]] = {
     "xiaohongshu": ("xiaohongshu.com", "xhslink.com"),
     "youtube": ("youtube.com", "youtu.be"),
     "bilibili": ("bilibili.com", "b23.tv"),
+    "baidu": ("baidu.com",),
     "github": ("github.com",),
     "zhihu": ("zhihu.com",),
     "csdn": ("csdn.net",),
@@ -49,7 +50,12 @@ def platform_for_url(url: str, fallback: str = "web") -> str:
     for platform, domains in PLATFORM_DOMAINS.items():
         if any(domain == item or domain.endswith("." + item) for item in domains):
             return platform
-    return sanitize_text(fallback or "web", 80).lower() or "web"
+    fallback_platform = sanitize_text(fallback or "web", 80).lower().replace("-", "_") or "web"
+    if fallback_platform == "baidu_search":
+        return "baidu"
+    if fallback_platform == "generic_web":
+        return "web"
+    return fallback_platform
 
 
 def content_type_for_platform(platform: str, url: str) -> str:
@@ -61,6 +67,8 @@ def content_type_for_platform(platform: str, url: str) -> str:
         return "repository-or-code-page"
     if platform in {"zhihu", "csdn", "juejin"}:
         return "article"
+    if platform == "baidu":
+        return "search-result"
     return "web-page"
 
 
@@ -136,11 +144,13 @@ def build_mock_enrichment(item: dict[str, Any], platform: str, content_type: str
         "userId": sanitize_text(item.get("userId") or "", 120),
         "platform": platform,
         "source": "agent-reach-enrichment",
+        "eventType": "WATCH" if content_type == "video" else "VISIT",
         "type": "WATCH" if content_type == "video" else "VISIT",
         "externalId": sanitize_text(item.get("externalId") or "", 160),
         "title": title,
         "url": url,
         "author": sanitize_text(item.get("author") or "", 160),
+        "contentSnippet": f"{summary_prefix}: {title}",
         "summary": f"{summary_prefix}: {title}",
         "tags": tags,
         "contentType": content_type,
@@ -168,6 +178,7 @@ def build_mock_enrichment(item: dict[str, Any], platform: str, content_type: str
             "intent": "public-url-enrichment",
         },
     }
+    result["rawMetadata"] = dict(result["rawEvidence"])
     print(f"[AgentReach] 返回结果: {json.dumps(result, ensure_ascii=False)}")
     return result
 

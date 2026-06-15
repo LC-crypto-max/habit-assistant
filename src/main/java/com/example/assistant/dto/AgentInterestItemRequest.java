@@ -16,7 +16,7 @@ public record AgentInterestItemRequest(
         String title,
         String url,
         String author,
-        String summary,
+        @JsonAlias("contentSnippet") String summary,
         String text,
         @JsonDeserialize(using = IsoLocalDateTimeDeserializer.class) LocalDateTime occurredAt,
         List<String> tags,
@@ -31,5 +31,5 @@ public record AgentInterestItemRequest(
         @JsonAlias("interestCategory") String contentCategory,
         String intent,
         String summaryForProfile,
-        Map<String, Object> rawEvidence) {
+        @JsonAlias("rawMetadata") Map<String, Object> rawEvidence) {
 }

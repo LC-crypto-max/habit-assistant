@@ -19,7 +19,7 @@ public record BehaviorEventRequest(
         String title,
         String url,
         String author,
-        String summary,
+        @JsonAlias("contentSnippet") String summary,
         String text,
         @JsonAlias("createdAt") @JsonDeserialize(using = IsoLocalDateTimeDeserializer.class) LocalDateTime occurredAt,
         List<String> tags,
@@ -33,5 +33,5 @@ public record BehaviorEventRequest(
         String intent,
         String summaryForProfile,
         List<String> recommendationHints,
-        Map<String, Object> rawEvidence) {
+        @JsonAlias("rawMetadata") Map<String, Object> rawEvidence) {
 }

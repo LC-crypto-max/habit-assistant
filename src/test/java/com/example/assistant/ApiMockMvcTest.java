@@ -838,4 +838,153 @@ class ApiMockMvcTest {
                 .andExpect(jsonPath("$.fields['events[0].platform']").exists())
                 .andExpect(jsonPath("$.fields['events[0].type']").value("eventType is required"));
     }
+
+    @Test
+    @Order(101)
+    void behaviorEventBatchNormalizesMultiPlatformEvents() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "multi-platform-user",
+                                      "platform": "bilibili",
+                                      "eventType": "WATCH",
+                                      "url": "http://www.bilibili.com/video/BV1demo?spm_id_from=333.788&utm_source=share",
+                                      "title": "Bilibili demo video",
+                                      "contentSnippet": "A public Bilibili video.",
+                                      "tags": ["bilibili", "video"],
+                                      "rawMetadata": {"domain": "bilibili.com"}
+                                    },
+                                    {
+                                      "userId": "multi-platform-user",
+                                      "platform": "youtube",
+                                      "eventType": "WATCH",
+                                      "url": "https://youtube.com/watch?v=yt123456&utm_source=share&feature=share",
+                                      "title": "YouTube demo video",
+                                      "author": "Demo Channel",
+                                      "contentSnippet": "A public YouTube video.",
+                                      "rawMetadata": {"domain": "youtube.com"}
+                                    },
+                                    {
+                                      "userId": "multi-platform-user",
+                                      "platform": "baidu_search",
+                                      "eventType": "SEARCH",
+                                      "url": "",
+                                      "title": "Spring Boot AI",
+                                      "contentSnippet": "Baidu search query.",
+                                      "rawMetadata": {"query": "Spring Boot AI"}
+                                    },
+                                    {
+                                      "userId": "multi-platform-user",
+                                      "platform": "generic_web",
+                                      "eventType": "VISIT",
+                                      "url": "www.example.com/article?utm_campaign=demo&ref=keep",
+                                      "title": "Generic web article",
+                                      "contentSnippet": "A public web article.",
+                                      "rawMetadata": {"domain": "example.com"}
+                                    },
+                                    {
+                                      "userId": "multi-platform-user",
+                                      "platform": "xiaohongshu",
+                                      "eventType": "VISIT",
+                                      "externalId": "6a1cc3c2000000003501c1b2",
+                                      "url": "",
+                                      "title": "Xiaohongshu demo note",
+                                      "contentSnippet": "A public note.",
+                                      "rawMetadata": {"domain": "xiaohongshu.com"}
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(5))
+                .andExpect(jsonPath("$.activities[0].platform").value("bilibili"))
+                .andExpect(jsonPath("$.activities[0].url").value("https://www.bilibili.com/video/BV1demo"))
+                .andExpect(jsonPath("$.activities[0].rawEvidence.externalId").value("BV1demo"))
+                .andExpect(jsonPath("$.activities[1].platform").value("youtube"))
+                .andExpect(jsonPath("$.activities[1].url").value("https://www.youtube.com/watch?v=yt123456"))
+                .andExpect(jsonPath("$.activities[1].rawEvidence.externalId").value("yt123456"))
+                .andExpect(jsonPath("$.activities[1].rawEvidence.author").value("Demo Channel"))
+                .andExpect(jsonPath("$.activities[2].platform").value("baidu"))
+                .andExpect(jsonPath("$.activities[2].type").value("SEARCH"))
+                .andExpect(jsonPath("$.activities[2].rawEvidence.query").value("Spring Boot AI"))
+                .andExpect(jsonPath("$.activities[3].platform").value("web"))
+                .andExpect(jsonPath("$.activities[3].url").value("https://www.example.com/article?ref=keep"))
+                .andExpect(jsonPath("$.activities[4].platform").value("xiaohongshu"))
+                .andExpect(jsonPath("$.activities[4].url")
+                        .value("https://www.xiaohongshu.com/explore/6a1cc3c2000000003501c1b2"));
+    }
+
+    @Test
+    @Order(102)
+    void behaviorEventBatchRejectsInvalidPlatformEventsBeforeIngestion() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "invalid-user",
+                                      "platform": "unknown_platform",
+                                      "eventType": "VISIT",
+                                      "externalId": "item-1",
+                                      "title": "Unknown platform event"
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value("unknown platform: unknown_platform"))
+                .andExpect(jsonPath("$.path").value("/api/v1/behavior-events/batch"));
+    }
+
+    @Test
+    @Order(103)
+    void behaviorEventBatchRejectsPlatformUrlMismatch() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "invalid-user",
+                                      "platform": "youtube",
+                                      "eventType": "WATCH",
+                                      "url": "https://www.bilibili.com/video/BV1demo",
+                                      "title": "Mismatched platform"
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value("platform/url mismatch: youtube"))
+                .andExpect(jsonPath("$.path").value("/api/v1/behavior-events/batch"));
+    }
+
+    @Test
+    @Order(104)
+    void behaviorEventBatchRejectsMissingUrlAndExternalId() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "invalid-user",
+                                      "platform": "youtube",
+                                      "eventType": "WATCH",
+                                      "title": "No URL or external id"
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value("url or externalId is required for youtube events"))
+                .andExpect(jsonPath("$.path").value("/api/v1/behavior-events/batch"));
+    }
 }

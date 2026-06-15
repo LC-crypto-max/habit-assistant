@@ -211,6 +211,14 @@ public class ActivityService {
         safe.put("windowTitle", limit(rawEvidence.get("windowTitle"), 240));
         safe.put("domain", limit(rawEvidence.get("domain"), 160));
         safe.put("visitCount", visitCount(rawEvidence.get("visitCount")));
+        safe.put("query", limit(rawEvidence.get("query"), 240));
+        safe.put("platform", limit(rawEvidence.get("platform"), 120));
+        safe.put("eventType", limit(rawEvidence.get("eventType"), 80));
+        safe.put("url", limit(rawEvidence.get("url"), 1024));
+        safe.put("externalId", limit(rawEvidence.get("externalId"), 160));
+        safe.put("title", limit(rawEvidence.get("title"), 512));
+        safe.put("author", limit(rawEvidence.get("author"), 160));
+        safe.put("contentSnippet", limit(rawEvidence.get("contentSnippet"), 420));
         safe.put("adapter", limit(rawEvidence.get("adapter"), 80));
         safe.put("adapterMode", limit(rawEvidence.get("adapterMode"), 80));
         safe.put("agentReachCommand", limit(rawEvidence.get("agentReachCommand"), 500));

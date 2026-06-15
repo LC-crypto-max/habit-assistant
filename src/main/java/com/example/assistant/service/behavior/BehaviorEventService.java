@@ -9,6 +9,8 @@ import com.example.assistant.dto.BehaviorEventRequest;
 import com.example.assistant.model.ActivityType;
 import com.example.assistant.service.ActivityService;
 import com.example.assistant.service.UserContext;
+import com.example.assistant.service.behavior.adapter.PlatformEventAdapter;
+import com.example.assistant.service.behavior.adapter.UnifiedBehaviorEvent;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,12 +28,16 @@ public class BehaviorEventService {
     private final ActivityService activityService;
     private final UserContext userContext;
     private final BehaviorEventPublisher publisher;
+    private final List<PlatformEventAdapter> adapters;
+    private final BehaviorEventValidator validator;
 
     public BehaviorEventService(ActivityService activityService, UserContext userContext,
-            BehaviorEventPublisher publisher) {
+            BehaviorEventPublisher publisher, List<PlatformEventAdapter> adapters, BehaviorEventValidator validator) {
         this.activityService = activityService;
         this.userContext = userContext;
         this.publisher = publisher;
+        this.adapters = adapters;
+        this.validator = validator;
     }
 
     @Transactional
@@ -41,14 +47,16 @@ public class BehaviorEventService {
         int messagesPublished = 0;
 
         for (BehaviorEventRequest event : request.events()) {
-            if (isBlank(event.title()) && isBlank(event.text()) && isBlank(event.summary()) && isBlank(event.url())) {
+            if (isBlank(event.title()) && isBlank(event.text()) && isBlank(event.summary()) && isBlank(event.url())
+                    && isBlank(event.externalId()) && isBlank(rawValue(event, "query"))) {
                 skipped++;
                 continue;
             }
             String userId = userContext.resolve(event.userId());
-            ActivityResponse saved = activityService.record(toActivityRequest(userId, event));
+            UnifiedBehaviorEvent unified = normalizeForIngestion(event);
+            ActivityResponse saved = activityService.record(toActivityRequest(userId, event, unified));
             activities.add(saved);
-            if (publisher.publish(toMessage(userId, event, saved))) {
+            if (publisher.publish(toMessage(userId, event, saved, unified))) {
                 messagesPublished++;
             }
         }
@@ -56,40 +64,124 @@ public class BehaviorEventService {
         return new BehaviorEventBatchResponse(activities.size(), skipped, messagesPublished, activities);
     }
 
-    private ActivityRequest toActivityRequest(String userId, BehaviorEventRequest event) {
-        String platform = normalizePlatform(event.platform());
-        ActivityType type = event.type() == null ? inferType(event) : event.type();
+    private ActivityRequest toActivityRequest(String userId, BehaviorEventRequest event, UnifiedBehaviorEvent unified) {
+        String platform = unified.platform();
+        ActivityType type = unified.eventType();
+        String url = unified.url();
+        String externalId = unified.externalId();
         return new ActivityRequest(
                 userId,
                 type,
                 platform,
-                firstNonBlank(event.title(), event.summary(), event.url(), platform),
-                event.url(),
-                text(event),
-                event.occurredAt(),
+                firstNonBlank(unified.title(), unified.contentSnippet(), url, platform),
+                url,
+                text(unified, event.text()),
+                unified.occurredAt(),
                 tags(event, platform),
                 event.confidence(),
                 event.dataLevel(),
                 firstNonBlank(event.source(), "client"),
                 event.detectionReason(),
                 event.matchedKeyword(),
-                rawEvidence(event));
+                rawEvidence(event, unified));
     }
 
-    private BehaviorEventMessage toMessage(String userId, BehaviorEventRequest event, ActivityResponse saved) {
+    private BehaviorEventMessage toMessage(String userId, BehaviorEventRequest event, ActivityResponse saved,
+            UnifiedBehaviorEvent unified) {
         return new BehaviorEventMessage(
                 saved.id(),
                 userId,
                 saved.type(),
                 saved.platform(),
                 firstNonBlank(event.source(), "client"),
-                event.externalId(),
+                unified.externalId(),
                 saved.title(),
                 saved.url(),
                 saved.text(),
                 saved.occurredAt(),
                 saved.tags(),
                 LocalDateTime.now());
+    }
+
+    private UnifiedBehaviorEvent normalize(BehaviorEventRequest event) {
+        if (event.type() == ActivityType.APP_USAGE
+                || "visible-window".equalsIgnoreCase(firstNonBlank(event.source(), ""))
+                || "APP_USAGE_SNAPSHOT".equalsIgnoreCase(firstNonBlank(event.dataLevel(), ""))) {
+            return legacyNormalize(event);
+        }
+        return adapters.stream()
+                .filter(adapter -> adapter.supports(event.platform()))
+                .findFirst()
+                .map(adapter -> adapter.normalize(event))
+                .orElseGet(() -> legacyNormalize(event));
+    }
+
+    private UnifiedBehaviorEvent normalizeForIngestion(BehaviorEventRequest event) {
+        try {
+            UnifiedBehaviorEvent unified = normalize(event);
+            validator.validate(event, unified);
+            return unified;
+        } catch (IllegalArgumentException exception) {
+            validator.logRejected(event, exception.getMessage());
+            throw exception;
+        }
+    }
+
+    private UnifiedBehaviorEvent legacyNormalize(BehaviorEventRequest event) {
+        String platform = normalizePlatform(event.platform());
+        String url = normalizeLooseUrl(event.url());
+        String externalId = firstNonBlank(event.externalId(), legacyExternalId(event));
+        Map<String, Object> raw = new LinkedHashMap<>();
+        if (event.rawEvidence() != null) {
+            raw.putAll(event.rawEvidence());
+        }
+        putIfPresent(raw, "url", url);
+        putIfPresent(raw, "externalId", externalId);
+        putIfPresent(raw, "title", event.title());
+        putIfPresent(raw, "author", event.author());
+        putIfPresent(raw, "contentSnippet", event.summary());
+        putIfPresent(raw, "contentType", event.contentType());
+        putIfPresent(raw, "interestCategory", event.contentCategory());
+        putIfPresent(raw, "contentCategory", event.contentCategory());
+        putIfPresent(raw, "intent", event.intent());
+        putIfPresent(raw, "summaryForProfile", event.summaryForProfile());
+        if (event.recommendationHints() != null && !event.recommendationHints().isEmpty()) {
+            raw.put("recommendationHints", event.recommendationHints());
+        }
+        return new UnifiedBehaviorEvent(
+                event.userId(),
+                platform,
+                event.type() == null ? inferType(event) : event.type(),
+                url,
+                externalId,
+                firstNonBlank(event.title(), ""),
+                firstNonBlank(event.author(), ""),
+                firstNonBlank(event.summary(), ""),
+                event.occurredAt(),
+                raw);
+    }
+
+    private String legacyExternalId(BehaviorEventRequest event) {
+        if (event.type() != ActivityType.APP_USAGE
+                && !"visible-window".equalsIgnoreCase(firstNonBlank(event.source(), ""))
+                && !"APP_USAGE_SNAPSHOT".equalsIgnoreCase(firstNonBlank(event.dataLevel(), ""))) {
+            return "";
+        }
+        String basis = firstNonBlank(
+                rawValue(event, "processName"),
+                rawValue(event, "windowTitle"),
+                event.title(),
+                event.platform());
+        if (isBlank(basis)) {
+            return "";
+        }
+        String slug = basis.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9\\u4e00-\\u9fa5]+", "-")
+                .replaceAll("(^-|-$)", "");
+        if (slug.length() > 60) {
+            slug = slug.substring(0, 60);
+        }
+        return "app-usage-" + slug;
     }
 
     private ActivityType inferType(BehaviorEventRequest event) {
@@ -103,12 +195,12 @@ public class BehaviorEventService {
         return ActivityType.SEARCH;
     }
 
-    private String text(BehaviorEventRequest event) {
+    private String text(UnifiedBehaviorEvent event, String text) {
         return String.join(" ",
                 firstNonBlank(event.title(), ""),
-                firstNonBlank(event.summaryForProfile(), ""),
-                firstNonBlank(event.summary(), ""),
-                firstNonBlank(event.text(), ""),
+                firstNonBlank(String.valueOf(event.rawMetadata().getOrDefault("summaryForProfile", "")), ""),
+                firstNonBlank(event.contentSnippet(), ""),
+                firstNonBlank(text, ""),
                 firstNonBlank(event.author(), ""),
                 firstNonBlank(event.url(), ""),
                 firstNonBlank(event.externalId(), ""));
@@ -135,11 +227,15 @@ public class BehaviorEventService {
         return tags.stream().toList();
     }
 
-    private Map<String, Object> rawEvidence(BehaviorEventRequest event) {
-        Map<String, Object> raw = new LinkedHashMap<>();
-        if (event.rawEvidence() != null) {
-            raw.putAll(event.rawEvidence());
-        }
+    private Map<String, Object> rawEvidence(BehaviorEventRequest event, UnifiedBehaviorEvent unified) {
+        Map<String, Object> raw = new LinkedHashMap<>(unified.rawMetadata());
+        putIfPresent(raw, "platform", unified.platform());
+        putIfPresent(raw, "eventType", unified.eventType().name());
+        putIfPresent(raw, "url", unified.url());
+        putIfPresent(raw, "externalId", unified.externalId());
+        putIfPresent(raw, "title", unified.title());
+        putIfPresent(raw, "author", unified.author());
+        putIfPresent(raw, "contentSnippet", unified.contentSnippet());
         putIfPresent(raw, "contentType", event.contentType());
         putIfPresent(raw, "interestCategory", event.contentCategory());
         putIfPresent(raw, "contentCategory", event.contentCategory());
@@ -167,7 +263,27 @@ public class BehaviorEventService {
         if (isBlank(platform)) {
             return "unknown";
         }
-        return platform.trim().toLowerCase(Locale.ROOT);
+        String normalized = platform.trim().toLowerCase(Locale.ROOT).replace('-', '_');
+        return switch (normalized) {
+            case "baidu_search", "baidu" -> "baidu";
+            case "generic_web", "browser", "generic-web" -> "web";
+            case "youtube", "bilibili", "xiaohongshu" -> normalized;
+            default -> normalized;
+        };
+    }
+
+    private String normalizeLooseUrl(String url) {
+        if (isBlank(url)) {
+            return "";
+        }
+        String normalized = url.trim();
+        if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+            return normalized;
+        }
+        if (normalized.startsWith("www.")) {
+            return "https://" + normalized;
+        }
+        return normalized;
     }
 
     private String firstNonBlank(String... values) {
@@ -177,6 +293,11 @@ public class BehaviorEventService {
             }
         }
         return "";
+    }
+
+    private String rawValue(BehaviorEventRequest event, String key) {
+        Object value = event.rawEvidence() == null ? null : event.rawEvidence().get(key);
+        return value == null ? "" : String.valueOf(value);
     }
 
     private boolean isBlank(String value) {

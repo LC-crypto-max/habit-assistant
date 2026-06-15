@@ -49,9 +49,10 @@ Response:
 - Event type can be sent as `type` or `eventType`.
 - Event type values are case-insensitive and may use `-` instead of `_`, for example `visit` or `app-usage`.
 - `events[].tags` accepts a JSON string array.
-- `events[].rawEvidence` accepts a JSON object and is stored as sanitized JSON text.
+- `events[].rawMetadata` or `events[].rawEvidence` accepts a JSON object and is stored as sanitized JSON text.
 - `events[].occurredAt` accepts ISO-8601 local or offset datetime strings, for example `2026-06-12T10:00:00` or `2026-06-12T10:00:00+08:00`; `createdAt` is accepted as an alias.
-- Standard worker events use `eventType` and `interestCategory`; legacy `type` and `contentCategory` are still accepted.
+- Standard worker events use `eventType`, `contentSnippet`, `rawMetadata`, and `interestCategory`; legacy `type`, `summary`, `rawEvidence`, and `contentCategory` are still accepted.
+- Supported normalized platforms are `youtube`, `bilibili`, `baidu`, `xiaohongshu`, and `web`; `baidu_search` normalizes to `baidu`, and `generic_web` normalizes to `web`.
 
 Standard event example:
 
@@ -65,14 +66,15 @@ Standard event example:
       "source": "codex-cli-analysis",
       "url": "https://github.com/openai/codex",
       "title": "OpenAI Codex repository",
-      "summary": "Public GitHub repository.",
+      "author": "openai",
+      "contentSnippet": "Public GitHub repository.",
       "tags": ["github", "codex"],
       "contentType": "repository-or-code-page",
       "interestCategory": "developer-tooling",
       "confidence": "HIGH",
       "dataLevel": "PAGE_VISIBLE_CONTENT",
       "detectionReason": "public_url_enrichment",
-      "rawEvidence": {
+      "rawMetadata": {
         "domain": "github.com",
         "adapter": "agent-reach",
         "adapterMode": "mock"
