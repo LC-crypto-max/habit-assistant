@@ -1,0 +1,18 @@
+[
+  {
+    "packageName": "com.xingin.xhs",
+    "appName": "小红书",
+    "firstTimeUsed": "2026-06-06T08:00:00+08:00",
+    "lastTimeUsed": "2026-06-06T09:20:00+08:00",
+    "totalTimeInForegroundSeconds": 1800,
+    "launchCount": 4
+  },
+  {
+    "packageName": "com.google.android.youtube",
+    "appName": "YouTube",
+    "firstTimeUsed": "2026-06-06T10:00:00+08:00",
+    "lastTimeUsed": "2026-06-06T10:35:00+08:00",
+    "totalTimeInForegroundSeconds": 2100,
+    "launchCount": 2
+  }
+]
