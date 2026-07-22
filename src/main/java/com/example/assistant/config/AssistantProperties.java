@@ -448,6 +448,11 @@ public class AssistantProperties {
         private String scriptPath = "scripts/codex_query_worker.py";
         private String pythonCommand = "auto";
         private int limit = 20;
+        private String analysisProvider = "codex";
+        private String analysisChannel = "agent-reach";
+        private String codexCommand = "codex";
+        private String traeCommand = "trae-cli";
+        private int traeMaxSteps = 8;
 
         public boolean isEnabled() {
             return enabled;
@@ -487,6 +492,46 @@ public class AssistantProperties {
 
         public void setLimit(int limit) {
             this.limit = limit;
+        }
+
+        public String getAnalysisProvider() {
+            return analysisProvider;
+        }
+
+        public void setAnalysisProvider(String analysisProvider) {
+            this.analysisProvider = analysisProvider;
+        }
+
+        public String getAnalysisChannel() {
+            return analysisChannel;
+        }
+
+        public void setAnalysisChannel(String analysisChannel) {
+            this.analysisChannel = analysisChannel;
+        }
+
+        public String getCodexCommand() {
+            return codexCommand;
+        }
+
+        public void setCodexCommand(String codexCommand) {
+            this.codexCommand = codexCommand;
+        }
+
+        public String getTraeCommand() {
+            return traeCommand;
+        }
+
+        public void setTraeCommand(String traeCommand) {
+            this.traeCommand = traeCommand;
+        }
+
+        public int getTraeMaxSteps() {
+            return traeMaxSteps;
+        }
+
+        public void setTraeMaxSteps(int traeMaxSteps) {
+            this.traeMaxSteps = traeMaxSteps;
         }
     }
 

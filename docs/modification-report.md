@@ -1,5 +1,19 @@
 # 修改报告
 
+## 2026-07-22 TRAE CLI + Agent Reach 小红书演示渠道
+
+本轮将原有 Codex 单 Provider 演示升级为可选择的双层结构：
+
+- `analysisProvider=trae|codex` 选择语义分析 CLI。
+- `analysisChannel=agent-reach|public-metadata` 选择内容证据渠道。
+- Vue 页面默认使用 `TRAE CLI + Agent Reach 小红书公开笔记` 主链。
+- TRAE 在隔离临时目录运行，输出统一经过严格 JSON、敏感字段和 URL 完整性校验。
+- Codex 保留为 Provider 备援，公开元数据保留为渠道降级。
+- 新增 `docs/trae-xiaohongshu-demo-guide.md`，补充现场步骤、成功判据、话术与排障。
+- 更新 README、技术沉淀、通用小红书指南、Agent Task 架构和 API 参数说明。
+
+验证结果：Python 58 项、Java 41 项测试通过，Vue/Vite 生产构建成功。真实 TRAE 请求仍要求用户在本机配置有效模型 Provider API Key。
+
 ## 背景
 
 本轮按照项目内安装的 skill 做了代码审查、API 检查、测试补强和文档整理。使用到的本地 skill：

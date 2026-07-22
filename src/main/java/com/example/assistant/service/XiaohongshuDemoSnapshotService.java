@@ -85,7 +85,8 @@ public class XiaohongshuDemoSnapshotService {
                         && "SUCCESS".equalsIgnoreCase(visit.agentReachStatus()));
         boolean aiAnalyzed = visits.stream().anyMatch(visit ->
                 "SUCCESS".equalsIgnoreCase(visit.llmStatus())
-                        || "codex-cli-analysis".equalsIgnoreCase(visit.source()));
+                        || "codex-cli-analysis".equalsIgnoreCase(visit.source())
+                        || "trae-cli-analysis".equalsIgnoreCase(visit.source()));
         boolean profileReady = profile != null && profile.topInterests() != null && !profile.topInterests().isEmpty();
         boolean recommendationsReady = recommendations != null && recommendations.recommendations() != null
                 && !recommendations.recommendations().isEmpty();

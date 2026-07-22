@@ -5,7 +5,7 @@ workflows:
 
 ```text
 Task JSON
-  -> Codex Agent / Codex CLI
+  -> Codex CLI or TRAE CLI
   -> local script or skill
   -> data source adapter
   -> non-private interest data
@@ -112,3 +112,23 @@ reuse the existing browser login:
 The worker never exports that login state. It waits for Codex semantic analysis
 before posting the normalized `behavior_event`, so tags and summaries are
 available to the profile builder immediately.
+
+## TRAE CLI Provider
+
+Use `--analysis-provider trae` to run the same public-content semantic analysis through TRAE CLI. The provider invokes TRAE in a fresh temporary working directory and passes only the sanitized JSON prompt produced after Agent Reach enrichment and PolicyGate evaluation. Codex remains available with `--analysis-provider codex`.
+
+The normalized source records which provider completed the analysis:
+
+- `trae-cli-analysis`
+- `codex-cli-analysis`
+
+Both providers must return strict JSON containing `summary`, `tags`, `interestCategory`, `intent`, and `confidence`. Invalid, sensitive, or non-JSON output is rejected and the original public metadata is retained.
+
+## Analysis Channels
+
+`--analysis-provider` selects the semantic engine, while `--analysis-channel` selects the evidence source:
+
+- `agent-reach`: platform-aware public-content enrichment followed by TRAE or Codex analysis.
+- `public-metadata`: sanitized URL/title metadata only, used as a safe fallback.
+
+For the Xiaohongshu demo, the supported route is `Agent Reach/OpenCLI visible public tab -> PolicyGate -> TRAE CLI -> PrivacySanitizer -> ingestion`. This preserves the multi-platform routing described by Agent Reach while ensuring that browser credentials and signed query parameters never enter the model context or persistence layer.

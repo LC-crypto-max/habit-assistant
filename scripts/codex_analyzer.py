@@ -22,31 +22,30 @@ class CodexAnalyzer:
             timeout: int = 60,
             max_workers: int = 4,
             env_provider: Callable[[], dict[str, str]] | None = None,
-            sanitizer: Callable[[Any, int], str] | None = None):
+            sanitizer: Callable[[Any, int], str] | None = None,
+            provider: str = "codex",
+            max_steps: int = 8):
         self.command = command or "codex"
+        self.provider = (provider or "codex").strip().lower()
         self.timeout = max(1, int(timeout or 60))
         self.env_provider = env_provider or (lambda: {})
         self.sanitize = sanitizer or default_sanitize
-        self.gateway = LLMGateway(self.command, self.timeout, self.env_provider, self.sanitize)
-        self.executor = ThreadPoolExecutor(max_workers=max(1, max_workers), thread_name_prefix="codex-analyzer")
+        self.gateway = LLMGateway(
+            self.command, self.timeout, self.env_provider, self.sanitize,
+            provider=self.provider, max_steps=max_steps)
+        self.executor = ThreadPoolExecutor(max_workers=max(1, max_workers), thread_name_prefix=f"{self.provider}-analyzer")
         self.futures: list[Future[dict[str, Any]]] = []
 
     def should_analyze(self, item: dict[str, Any]) -> bool:
         event_type = self.sanitize(item.get("eventType") or item.get("type") or "", 40).upper()
         url = self.sanitize(item.get("url") or "", 600)
-        platform = self.sanitize(item.get("platform") or "", 80).lower()
-        raw = item.get("rawMetadata") or item.get("rawEvidence") or {}
-        if platform in {"xiaohongshu", "xhs"} and isinstance(raw, dict):
-            agent_reach_status = self.sanitize(raw.get("agentReachStatus") or "", 40).upper()
-            if agent_reach_status and agent_reach_status != "SUCCESS":
-                return False
         return bool(url) and event_type in {"VISIT", "WATCH", "FAVORITE"}
 
     def mark_pending_or_failed(self, item: dict[str, Any]) -> None:
         raw = ensure_raw_metadata(item)
         if not self.gateway.available():
             raw["llm_status"] = "FAILED"
-            raw["llm_error"] = f"Codex command not found: {self.command}"
+            raw["llm_error"] = f"{self.provider.upper()} command not found: {self.command}"
             return
         raw["llm_status"] = "PENDING"
 
@@ -120,6 +119,8 @@ class CodexAnalyzer:
             })
             raw = ensure_raw_metadata(item)
             raw["llm_status"] = "SUCCESS"
+            raw["llm_provider"] = self.provider
+            raw["analysis_channel"] = llm_input["analysisChannel"]
             raw["llm_result"] = {
                 "summary": analysis["summary"],
                 "tags": analysis["tags"],
@@ -128,7 +129,7 @@ class CodexAnalyzer:
                 "confidence": analysis["confidence"],
             }
             raw["llm_latency_ms"] = latency_ms
-            apply_analysis_to_item(item, analysis)
+            apply_analysis_to_item(item, analysis, self.provider)
             print_structured_log("llm_output_log", analysis)
             return analysis
         except Exception as exc:
@@ -154,12 +155,15 @@ class CodexAnalyzer:
             return result
 
     def llm_input(self, item: dict[str, Any]) -> dict[str, Any]:
+        raw = item.get("rawMetadata") or item.get("rawEvidence") or {}
         return {
             "platform": self.sanitize(item.get("platform") or "", 80),
             "url": self.sanitize(item.get("url") or "", 600),
             "title": self.sanitize(item.get("title") or "", 300),
             "contentSnippet": self.sanitize(item.get("contentSnippet") or item.get("summary") or "", 800),
             "eventType": self.sanitize(item.get("eventType") or item.get("type") or "", 40).upper(),
+            "analysisChannel": self.sanitize(
+                raw.get("analysisChannel") if isinstance(raw, dict) else "", 40),
         }
 
     def _print_callback(self, future: Future[dict[str, Any]]) -> None:
@@ -236,7 +240,7 @@ def ensure_raw_metadata(item: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
-def apply_analysis_to_item(item: dict[str, Any], analysis: dict[str, Any]) -> None:
+def apply_analysis_to_item(item: dict[str, Any], analysis: dict[str, Any], provider: str = "codex") -> None:
     item["summary"] = analysis.get("summary") or item.get("summary") or ""
     item["summaryForProfile"] = item["summary"]
     item["tags"] = list(analysis.get("tags") or [])
@@ -244,7 +248,7 @@ def apply_analysis_to_item(item: dict[str, Any], analysis: dict[str, Any]) -> No
     item["contentCategory"] = item["interestCategory"]
     item["intent"] = analysis.get("intent") or item.get("intent") or ""
     item["confidence"] = analysis.get("confidence") or item.get("confidence") or "MEDIUM"
-    item["source"] = "codex-cli-analysis"
+    item["source"] = f"{provider}-cli-analysis"
 
 
 def print_llm_result(result: dict[str, Any]) -> None:

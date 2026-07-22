@@ -1,5 +1,7 @@
 # 小红书 AI 兴趣分析演示指南
 
+> 明天若以 TRAE CLI 为主，请优先使用 [TRAE CLI 小红书主演示手册](trae-xiaohongshu-demo-guide.md)。本文保留通用演示与历史排障信息，Codex 仍可作为备援 Provider。
+
 ## 演示边界
 
 本次演示证明的是一条“用户主动提交本人访问的公开笔记”的最小授权链路：
@@ -10,7 +12,7 @@ Vue 页面粘贴小红书完整分享文案
   -> 用户勾选单次浏览器会话授权
   -> 本地 PowerShell Worker 精确领取该任务
   -> OpenCLI / Agent Reach 读取页面可见公开内容
-  -> Codex CLI 生成摘要、标签、类别和意图
+  -> TRAE CLI（或 Codex 备援）生成摘要、标签、类别和意图
   -> Spring Boot 将脱敏事件写入本机 MySQL
   -> 兴趣画像与今日推荐更新
 ```
@@ -42,7 +44,7 @@ MySQL 用户需要能够访问 `habit_assistant`；若没有创建数据库权�
 
 脚本会以安全输入框读取密码，只保留在当前进程内存。
 
-### 2. 检查 JDK、Agent Reach 与 Codex
+### 2. 检查 JDK、Agent Reach 与 TRAE/Codex
 
 ```powershell
 $demoJdk = Get-ChildItem -Directory .\.local-tools\jdk17 | Select-Object -First 1
@@ -107,7 +109,7 @@ Invoke-RestMethod http://localhost:8080/api/v1/demo-system/status
    [PIPELINE 3/3] Saving the analyzed visit and refreshing the demo snapshot...
    ```
 
-7. 页面会轮询当前任务。访问入队、Agent Reach、Codex AI、兴趣画像、今日推荐五步都完成后，
+7. 页面会轮询当前任务。访问入队、Agent Reach、TRAE/Codex AI、兴趣画像、今日推荐五步都完成后，
    再讲解公开访问证据、AI 摘要、兴趣标签和推荐理由。
 
 页面授权已经是明确的单次确认，因此自动打开的 Worker 不再要求重复输入 `y`；PowerShell 保留
@@ -145,7 +147,9 @@ $demoPython = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\depe
 | 启动时提示 MySQL 认证失败 | 检查本地 YAML 的账号、密码、端口以及数据库权限 |
 | 页面一直“正在连接本地服务” | 检查 `/actuator/health` 与 `/api/v1/demo-system/status` |
 | Agent Reach 失败 | 确认 Chrome 已登录、OpenCLI 扩展已连接、允许 localhost 弹出标签页；打开目标笔记后重新创建任务 |
-| Codex 失败 | 执行 `codex --version` 并确认 CLI 已登录；查看 PowerShell 第 2 阶段日志 |
+| TRAE 401 | 将 `trae_config.yaml` 中的 Provider 占位 API Key 换为真实有效 Key，禁止提交到 Git |
+| TRAE 配置报字段缺失 | 补充 `top_p`、`top_k`、`parallel_tool_calls`、`max_retries`；未配置 Lakeview 时设为 `false` |
+| Codex 失败 | 执行 `codex --version` 并确认 CLI 已登录；也可切回 TRAE 排查 Provider 差异 |
 | 有访问但画像为空 | 只有真实页面内容或中高置信度证据才形成稳定画像；失败占位数据不会冒充成功 |
 | 推荐为空 | 点击“使用最新画像重算推荐”，并确认本次访问时间在最近 24 小时内 |
 | 单个模块报错 | 聚合 API 会返回 HTTP 200 的部分结果和 `degraded=true`，不让整页因一个模块崩溃 |

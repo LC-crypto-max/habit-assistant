@@ -265,6 +265,69 @@ class AgentReachAdapterTest(unittest.TestCase):
 
         self.assertEqual(bridge.enrich(item), item)
 
+    def test_xhs_cli_failure_falls_back_to_matching_visible_tab(self):
+        calls = []
+
+        def resolve(name):
+            return {"xhs": "C:/tools/xhs.exe", "opencli": "C:/tools/opencli.cmd"}.get(name)
+
+        def run(args, _timeout):
+            calls.append(args)
+            command = " ".join(args)
+            if args[0].endswith("xhs.exe"):
+                return subprocess.CompletedProcess(
+                    args, 1, stdout="", stderr="Cookie refresh failed; using existing cookies")
+            if command.endswith(" bind"):
+                return subprocess.CompletedProcess(args, 0, stdout="bound", stderr="")
+            if command.endswith(" state"):
+                return subprocess.CompletedProcess(
+                    args, 0,
+                    stdout="url: https://www.xiaohongshu.com/discovery/item/note123",
+                    stderr="")
+            if " eval " in command:
+                return subprocess.CompletedProcess(
+                    args, 0,
+                    stdout='{"title":"公开笔记","summary":"可见页面正文"}', stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout="unbound", stderr="")
+
+        bridge = adapter.AgentReachAdapter(
+            adapter.AgentReachSettings(mode="live", allow_authenticated_browser=True),
+            tool_resolver=resolve,
+            process_runner=run,
+        )
+        bridge._doctor = {"channels": {"xiaohongshu": {"active_backend": "xhs-cli"}}}
+        enriched = bridge.enrich({
+            "platform": "xiaohongshu", "source": "public-url",
+            "url": "https://www.xiaohongshu.com/discovery/item/note123",
+            "confidence": "MEDIUM", "dataLevel": "PUBLIC_URL",
+        })
+
+        self.assertEqual(enriched["rawMetadata"]["agentReachStatus"], "SUCCESS")
+        self.assertEqual(enriched["rawMetadata"]["agentReachRoute"], "xiaohongshu-visible-tab")
+        self.assertEqual(enriched["summary"], "可见页面正文")
+        self.assertTrue(any(call[0].endswith("xhs.exe") for call in calls))
+
+    def test_xhs_cli_failure_without_opencli_reports_visible_tab_dependency(self):
+        def run(args, _timeout):
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="Cookie refresh failed; using existing cookies")
+
+        bridge = adapter.AgentReachAdapter(
+            adapter.AgentReachSettings(mode="live", allow_authenticated_browser=True),
+            tool_resolver=lambda name: "C:/tools/xhs.exe" if name == "xhs" else None,
+            process_runner=run,
+        )
+        enriched = bridge.enrich({
+            "platform": "xiaohongshu", "source": "public-url",
+            "url": "https://www.xiaohongshu.com/discovery/item/note123",
+            "confidence": "MEDIUM", "dataLevel": "PUBLIC_URL",
+        })
+
+        raw = enriched["rawMetadata"]
+        self.assertEqual(raw["agentReachStatus"], "UNAVAILABLE")
+        self.assertEqual(raw["agentReachBackend"], "unavailable")
+        self.assertIn("OpenCLI is not installed", raw["agentReachError"])
+
 
 if __name__ == "__main__":
     unittest.main()

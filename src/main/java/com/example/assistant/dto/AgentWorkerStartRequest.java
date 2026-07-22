@@ -6,5 +6,7 @@ public record AgentWorkerStartRequest(
         Boolean allowAuthenticatedBrowser,
         String agentReachMode,
         Boolean confirmedByUser,
-        String taskId) {
+        String taskId,
+        String analysisProvider,
+        String analysisChannel) {
 }

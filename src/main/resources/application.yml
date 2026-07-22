@@ -92,6 +92,11 @@ assistant:
     script-path: scripts/codex_query_worker.py
     python-command: auto
     limit: 20
+    analysis-provider: codex
+    analysis-channel: agent-reach
+    codex-command: codex
+    trae-command: trae-cli
+    trae-max-steps: 8
   auth:
     enabled: false
     users:

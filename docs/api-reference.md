@@ -94,6 +94,8 @@ PowerShell 仍展示完整阶段日志。接口不会接收 Cookie、Token、Ses
 | `agentReachMode` | No | `auto`、`live` 或 `off`；小红书真实演示使用 `live` |
 | `confirmedByUser` | No | 表示本次请求已在 Vue 页面完成明确授权；读取登录浏览器时必须为 `true` |
 | `taskId` | No | 仅领取该任务；Vue 演示必须传入刚创建的任务编号，避免处理旧任务 |
+| `analysisProvider` | No | `trae` 或 `codex`；小红书主演示使用 `trae` |
+| `analysisChannel` | No | `agent-reach` 或 `public-metadata`；主演示使用 `agent-reach` |
 
 `python-command: auto` 会优先使用 Codex Desktop 已安装的 Python 运行时；其他环境可通过
 `assistant.local-worker.python-command` 显式指定可信 Python 命令。

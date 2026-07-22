@@ -4,6 +4,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 const userId = ref("me");
 const shareText = ref("");
 const query = ref("");
+const analysisProvider = ref("trae");
+const analysisChannel = ref("agent-reach");
 const consent = ref(false);
 const busy = ref(false);
 const refreshing = ref(false);
@@ -46,13 +48,15 @@ const steps = computed(() => {
     },
     {
       label: "Agent Reach",
-      detail: readiness.value.agentReachLive ? "OpenCLI 已读取公开内容" : running ? "正在读取页面" : "等待 Worker",
+      detail: analysisChannel.value === "agent-reach"
+        ? (readiness.value.agentReachLive ? "OpenCLI 已读取公开内容" : running ? "正在读取页面" : "等待 Worker")
+        : "公共元数据安全降级",
       done: Boolean(readiness.value.agentReachLive),
       active: running && !readiness.value.agentReachLive,
       failed
     },
     {
-      label: "Codex AI",
+      label: `${analysisProvider.value === "trae" ? "TRAE" : "Codex"} AI`,
       detail: readiness.value.aiAnalyzed ? "语义分析成功" : running ? "将在页面读取后执行" : "等待公开内容",
       done: Boolean(readiness.value.aiAnalyzed),
       active: running && readiness.value.agentReachLive,
@@ -219,10 +223,12 @@ async function runDemo() {
         allowAuthenticatedBrowser: true,
         agentReachMode: "live",
         confirmedByUser: true,
-        taskId: task.value.taskId
+        taskId: task.value.taskId,
+        analysisProvider: analysisProvider.value,
+        analysisChannel: analysisChannel.value
       })
     });
-    noticeMessage.value = "授权已确认。签名链接仅在 Chrome 打开；后端与 Codex 只接收脱敏 URL 和 OpenCLI 提取的公开内容。";
+    noticeMessage.value = `授权已确认。签名链接仅在 Chrome 打开；后端与 ${analysisProvider.value === "trae" ? "TRAE" : "Codex"} 只接收脱敏 URL 和 OpenCLI 提取的公开内容。`;
     await pollTask(task.value.taskId);
   } catch (error) {
     errorMessage.value = friendlyError(error);
@@ -283,7 +289,7 @@ function friendlyError(error) {
     ["BROWSER_AUTHORIZATION_CONFIRMATION_REQUIRED", "需要在页面确认浏览器会话授权。"],
     ["LOCAL_WORKER", "无法启动本地 Worker，请确认项目从 Windows 本机运行。"],
     ["Agent Reach could not read the matching", "Agent Reach 未能读取刚打开的目标笔记。请允许 localhost 弹出窗口，保持目标笔记在 Chrome 中可见，然后重新提交任务。"],
-    ["Codex analysis did not complete", "Codex 分析未完成，请确认 Codex CLI 已登录。"],
+    ["command not found", "所选 AI CLI 不可用，请确认 TRAE CLI 或 Codex CLI 已安装并完成配置。"],
     ["Failed to fetch", "无法连接后端，请确认 MySQL 与 Spring Boot 服务正在运行。"]
   ];
   return mappings.find(([needle]) => text.includes(needle))?.[1] || text.replace(/^HTTP \d+:\s*/i, "");
@@ -336,7 +342,7 @@ onBeforeUnmount(() => { if (pollTimer) window.clearTimeout(pollTimer); });
         <div>
           <p class="eyebrow">PRIVATE BY DESIGN · DEMO CONSOLE</p>
           <h1>把一次公开访问，<br /><span>变成可解释的兴趣推荐。</span></h1>
-          <p class="hero-copy">粘贴你本人访问的小红书公开笔记。Agent Reach 读取公开页面，Codex 提炼兴趣语义，本地数据库保存脱敏结果。</p>
+          <p class="hero-copy">粘贴你本人访问的小红书公开笔记。Agent Reach 读取公开页面，TRAE 或 Codex 提炼兴趣语义，本地数据库保存脱敏结果。</p>
         </div>
         <div class="privacy-seal" aria-label="隐私边界说明">
           <span>本地优先</span>
@@ -372,6 +378,18 @@ onBeforeUnmount(() => { if (pollTimer) window.clearTimeout(pollTimer); });
 
           <label for="query">补充关注点 <span class="optional">可选</span></label>
           <input id="query" v-model="query" maxlength="512" placeholder="例如：这篇笔记主要反映了什么兴趣？" />
+
+          <label for="analysis-provider">分析智能体</label>
+          <select id="analysis-provider" v-model="analysisProvider">
+            <option value="trae">TRAE CLI（推荐演示）</option>
+            <option value="codex">Codex CLI（备选）</option>
+          </select>
+
+          <label for="analysis-channel">内容分析渠道</label>
+          <select id="analysis-channel" v-model="analysisChannel">
+            <option value="agent-reach">Agent Reach · 小红书公开笔记（主演示）</option>
+            <option value="public-metadata">公开 URL 元数据（安全降级）</option>
+          </select>
 
           <label class="consent-box" :class="{ checked: consent }">
             <input v-model="consent" type="checkbox" />
@@ -419,7 +437,7 @@ onBeforeUnmount(() => { if (pollTimer) window.clearTimeout(pollTimer); });
       <section class="result-grid">
         <article class="panel profile-card">
           <div class="card-title"><span>兴趣画像</span><small>{{ snapshot?.profile?.profileVersion || "等待证据" }}</small></div>
-          <p class="profile-summary">{{ snapshot?.profile?.summary || "完成一次高质量公开页面分析后，Codex 生成的兴趣摘要会显示在这里。" }}</p>
+          <p class="profile-summary">{{ snapshot?.profile?.summary || "完成一次高质量公开页面分析后，AI 生成的兴趣摘要会显示在这里。" }}</p>
           <div class="interest-list" v-if="interests.length">
             <div v-for="interest in interests.slice(0, 6)" :key="interest.name" class="interest-row">
               <span>{{ interest.name }}</span><div><i :style="{ width: `${Math.min(100, Math.max(8, interest.score * 10))}%` }"></i></div><b>{{ interest.confidence }}</b>

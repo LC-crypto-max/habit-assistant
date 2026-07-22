@@ -43,10 +43,15 @@ public class LocalAgentWorkerService {
             throw new IllegalArgumentException("BROWSER_AUTHORIZATION_CONFIRMATION_REQUIRED");
         }
         String agentReachMode = agentReachMode(request == null ? null : request.agentReachMode());
+        String analysisProvider = analysisProvider(
+                request == null ? null : request.analysisProvider(), localWorker.getAnalysisProvider());
+        String analysisChannel = analysisChannel(
+                request == null ? null : request.analysisChannel(), localWorker.getAnalysisChannel());
         String taskId = request == null ? null : safeTaskId(request.taskId());
         Path workingDirectory = Path.of("").toAbsolutePath().normalize();
         String commandLine = workerCommand(
-                localWorker, limit, dryRun, allowAuthenticatedBrowser, confirmedByUser, agentReachMode, taskId);
+                localWorker, limit, dryRun, allowAuthenticatedBrowser, confirmedByUser,
+                agentReachMode, taskId, analysisProvider, analysisChannel);
         List<String> command = List.of(
                 "cmd",
                 "/c",
@@ -78,7 +83,8 @@ public class LocalAgentWorkerService {
     }
 
     private String workerCommand(AssistantProperties.LocalWorker localWorker, int limit, boolean dryRun,
-            boolean allowAuthenticatedBrowser, boolean confirmedByUser, String agentReachMode, String taskId) {
+            boolean allowAuthenticatedBrowser, boolean confirmedByUser, String agentReachMode, String taskId,
+            String analysisProvider, String analysisChannel) {
         List<String> args = new ArrayList<>();
         args.add(pythonInvocation(localWorker));
         args.add(quote(localWorker.getScriptPath()));
@@ -89,6 +95,16 @@ public class LocalAgentWorkerService {
         args.add(String.valueOf(limit));
         args.add("--agent-reach-mode");
         args.add(agentReachMode);
+        args.add("--analysis-provider");
+        args.add(analysisProvider);
+        args.add("--analysis-channel");
+        args.add(analysisChannel);
+        args.add("--codex-command");
+        args.add(quote(localWorker.getCodexCommand()));
+        args.add("--trae-command");
+        args.add(quote(localWorker.getTraeCommand()));
+        args.add("--trae-max-steps");
+        args.add(String.valueOf(Math.max(1, Math.min(localWorker.getTraeMaxSteps(), 50))));
         if (taskId != null) {
             args.add("--task-id");
             args.add(quote(taskId));
@@ -138,6 +154,24 @@ public class LocalAgentWorkerService {
             throw new IllegalArgumentException("INVALID_AGENT_REACH_MODE");
         }
         return mode;
+    }
+
+    private String analysisProvider(String requested, String configured) {
+        String value = requested == null || requested.isBlank() ? configured : requested;
+        String provider = value == null ? "codex" : value.trim().toLowerCase(Locale.ROOT);
+        if (!List.of("codex", "trae").contains(provider)) {
+            throw new IllegalArgumentException("INVALID_ANALYSIS_PROVIDER");
+        }
+        return provider;
+    }
+
+    private String analysisChannel(String requested, String configured) {
+        String value = requested == null || requested.isBlank() ? configured : requested;
+        String channel = value == null ? "agent-reach" : value.trim().toLowerCase(Locale.ROOT);
+        if (!List.of("agent-reach", "public-metadata").contains(channel)) {
+            throw new IllegalArgumentException("INVALID_ANALYSIS_CHANNEL");
+        }
+        return channel;
     }
 
     private String quote(String value) {

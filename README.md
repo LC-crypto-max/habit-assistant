@@ -1,27 +1,29 @@
 # Habit Assistant Java
 
-个人兴趣助手，用 Spring Boot 保存用户授权范围内的非敏感行为事件，生成兴趣画像和每日推荐。当前版本的重点不是“多抓数据”，而是把公开 URL、平台适配、本地 worker、Agent Reach 和 Codex/LLM 分析串成一条可解释、可追踪、可回退的兴趣理解链路。
+个人兴趣助手，用 Spring Boot 保存用户授权范围内的非敏感行为事件，生成兴趣画像和每日推荐。当前版本把公开 URL、平台适配、本地 worker、Agent Reach 与 TRAE/Codex CLI 串成一条可解释、可追踪、可回退的兴趣理解链路。
 
 ## 当前完成状态
 
 面向演示的 MVP 已完成并通过本机验收：页面可提交本人授权的小红书公开笔记 URL，
-显式允许本次复用浏览器登录会话，启动本地 worker，经 OpenCLI/Agent Reach 和 Codex CLI
+显式允许本次复用浏览器登录会话，启动本地 worker，经 OpenCLI/Agent Reach 和 TRAE CLI
 分析后写入后端，并在同一页面展示访问证据、AI 摘要、兴趣画像和今日推荐。
+Codex CLI 保留为可选备援 Provider；页面可分别选择语义分析 Provider 与内容分析渠道。
 
 当前不能宣称“读取整个小红书账号的全部浏览历史”。系统只处理用户主动提交的公开链接、
 导入的浏览器历史和允许范围内的本地数据；不读取推荐 feed、收藏、通知、私信或账号凭据。
 对于包含 `xsec_token` 的完整分享链接，签名 URL 只在浏览器内存中用于打开本人授权的页面；
-后端、Codex、数据库和日志仅接收不含签名参数的真实公开规范 URL 与 OpenCLI 提取的页面可见正文。
+后端、TRAE/Codex、数据库和日志仅接收不含签名参数的真实公开规范 URL 与 OpenCLI 提取的页面可见正文。
 
 已验证结果：
 
 - Java：41 个测试全部通过；
-- Python：51 个测试全部通过；
+- Python：63 个测试全部通过；
 - Vue 3/Vite 生产构建成功，旧静态 HTML 入口已删除；
 - 可执行 JAR 启动成功，`/actuator/health` 返回 `UP`；
 - 首页、`/api/v1/demo-system/status` 与 `/api/v1/demo-snapshots/xiaohongshu` 返回 200；
 - 桌面和 375px 移动端通过浏览器验收，无横向溢出；
-- `opencli 1.8.6`、`bili 0.6.2`、`yt-dlp 2026.07.04`、`codex-cli 0.145.0` 可用。
+- `trae-cli 0.1.0` 的命令与配置加载路径已验证；真实模型分析需要有效 Provider API Key；
+- 当前机器已检测到 `xhs`，但未检测到 `opencli`；小红书主演示必须先补齐 OpenCLI 命令和浏览器扩展。`bili`、`yt-dlp` 与 `codex-cli` 可作为其他渠道工具。
 
 ## 项目解决什么问题
 
@@ -30,12 +32,36 @@
 1. 用户在本机显式启动 worker。
 2. worker 只读取授权范围内的公开 URL、标题、访问时间、访问次数或模拟数据。
 3. Agent Reach channel tools只读取用户授权的公开页面或公开视频元数据；登录态只允许 OpenCLI 在本机复用，不导出凭据。
-4. Codex/LLM 只分析 worker 提供的公开上下文，不读取本机文件、不主动访问外部网络。
+4. TRAE/Codex 只分析 worker 提供的公开上下文，并在隔离临时目录中运行。
 5. Spring Boot 只接收标准化 `behavior_event`，负责入库、画像和推荐。
 
 这样可以把“采集边界”和“理解能力”分开：敏感数据不出边界，LLM 只用来把公开内容理解成更有价值的兴趣信号。
 
 ## LLM 的作用
+
+语义分析现在支持 `codex` 和 `trae` 两种 CLI Provider。两者复用同一条 Agent Reach、PolicyGate、PrivacySanitizer、行为入库、画像和推荐链路；TRAE 只在临时隔离目录中接收经过脱敏的公开页面上下文，不会获得项目目录、Cookie、Token 或 Session。
+
+页面可直接选择 **TRAE CLI（推荐演示）** 或 **Codex CLI（备选）**。命令行也可以显式选择：
+
+```powershell
+py -3 scripts/codex_query_worker.py --once --analysis-provider trae `
+  --analysis-channel agent-reach --trae-command trae-cli --trae-max-steps 8 --agent-reach-mode live `
+  --allow-authenticated-browser --yes --verbose
+```
+
+TRAE CLI 调用形式为 `trae-cli run --file <临时任务说明> --working-dir <临时目录> --trajectory-file <临时轨迹> --console-type simple`。由于 `trae-cli 0.1.0` 内置的是软件工程 Agent 提示，Gateway 会把脱敏公开上下文放入一次性分析工作区，并要求 TRAE 将结果写入固定的 `analysis-result.json`；系统优先读取并校验该文件，不再依赖包含步骤面板的控制台文本。固定文件、轨迹和控制台都没有有效 JSON 时，任务失败且不会把占位摘要写入数据库。
+
+运行前需要确保 `C:\Users\Lenovo\trae-agent\trae_config.yaml` 中所选 Provider 使用真实有效的 API Key。新版 TRAE 模型配置还需要 `top_p`、`top_k`、`parallel_tool_calls` 和 `max_retries`；未配置 Lakeview 时应设置 `enable_lakeview: false`。
+
+### TRAE 分析渠道
+
+页面和 Worker 将模型与内容渠道分开配置：
+
+- `analysis-provider=trae|codex`：选择负责语义理解的 CLI。
+- `analysis-channel=agent-reach`：由本机 Agent Reach 按平台路由读取公开内容，再交给所选 CLI 分析；这是小红书主演示渠道。
+- `analysis-channel=public-metadata`：只使用脱敏 URL、标题等公开元数据，作为渠道不可用时的安全降级。
+
+当前 Agent Reach 适配器已经覆盖小红书、B站、YouTube、GitHub和通用网页等路由。小红书现场演示使用 OpenCLI 读取用户当前明确授权的可见公开标签页；项目不会把 Cookie、Token、Session 或 `xsec_token` 写入任务、TRAE 提示词、日志和数据库。教程中直接持久化 Cookie 的方式不属于本项目支持范围。
 
 LLM 在本项目里不是采集器，而是兴趣分析器。它的价值主要体现在：
 
@@ -60,7 +86,7 @@ LLM 在本项目里不是采集器，而是兴趣分析器。它的价值主要�
 重新打开，而不再自动搜索并制造额外标签页；Bilibili 视频通过 `bili`，普通网页通过 Jina Reader/curl；
 只有真实工具成功返回页面可见内容时，事件才会提升为 `HIGH / PAGE_VISIBLE_CONTENT`。
 
-如果 Codex CLI 不存在、超时、输出非 JSON、包含敏感字段或编造 URL，worker 会回退到元数据 enrichment 结果。
+如果小红书 Agent Reach 未取得真实页面内容，或所选 TRAE/Codex CLI 不存在、超时、输出非 JSON，worker 会将任务标记失败，不再把 URL 占位摘要当成成功结果写入数据库。
 
 当前 worker 还会为每个满足条件的访问 URL 事件自动触发 LLM 分析。触发条件已经收窄为：事件必须有非空 `url`，并且 `eventType` 是 `VISIT`、`WATCH` 或 `FAVORITE`。`APP_USAGE`、无 URL 的 `SEARCH` 和纯窗口快照不会进入 LLM，避免把本地 App 使用信号误当作内容理解任务。多个事件在线程池中并行分析，但 worker 会在写入后端前等待全部结果，确保画像拿到最终语义标签；CLI 会在每个事件分析完成时立即打印：
 
@@ -76,7 +102,7 @@ Confidence: HIGH
 =====================================
 ```
 
-同时输出结构化日志：`llm_input_log`、`llm_output_log`、`latency_ms`、`token_usage`。如果 LLM 失败，事件仍会带原始公开元数据继续入库，并在 metadata 中标记 `llm_status=FAILED`。
+同时输出结构化日志：`llm_input_log`、`llm_output_log`、`latency_ms`、`token_usage`。如果必需的 LLM 分析失败，任务会停止入库并返回不含凭据的诊断信息。
 
 ### 统一 LLM Gateway
 
@@ -143,7 +169,7 @@ worker 最终写入 `/api/v1/behavior-events/batch` 的事件结构：
 ## 后端能力
 
 - `/api/v1/behavior-events/batch` 接收批量行为事件。
-- `/api/v1/demo-snapshots/xiaohongshu` 聚合访问证据、Agent Reach/Codex 状态、画像和推荐，供现场演示一次读取。
+- `/api/v1/demo-snapshots/xiaohongshu` 聚合访问证据、Agent Reach、TRAE/Codex、画像和推荐状态，供现场演示一次读取。
 - `/api/agent/worker/start-once` 仅允许本机 loopback 调用；Vue 页面勾选授权后会传递本次确认，并在可见 PowerShell 中展示阶段日志。
 - `/api/v1/demo-system/status` 返回当前实际数据库类型、版本、profile 与连通状态，页面不会把 H2 误标成 MySQL。
 - DTO 支持 ISO-8601 时间、数组 tags、对象 rawMetadata。
@@ -218,20 +244,23 @@ Invoke-RestMethod http://localhost:8080/actuator/health
 
 ## 启动 Worker
 
-创建任务后，本地 worker 可以领取任务、读取授权 URL、调用公开元数据读取、调用 Codex CLI，并把事件写回后端：
+创建任务后，本地 worker 可以领取任务、读取授权 URL、调用 Agent Reach，并通过 TRAE 或 Codex CLI 分析后把事件写回后端：
 
 ```powershell
 $demoPython = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 & $demoPython scripts/codex_query_worker.py --once --direct-behavior-batch `
+  --analysis-provider trae --analysis-channel agent-reach `
   --agent-reach-mode live --allow-authenticated-browser --verbose
 ```
 
 常用参数：
 
 - `--agent-reach-mode auto|live|off`：控制真实 URL enrichment；默认 `auto`。
+- `--analysis-provider trae|codex`：选择语义分析 CLI；小红书主演示使用 `trae`。
+- `--analysis-channel agent-reach|public-metadata`：选择内容证据渠道；主演示使用 `agent-reach`。
 - `--allow-authenticated-browser`：显式允许 OpenCLI 复用现有浏览器登录来读取已提供的小红书公开笔记 URL，不会导出或保存 Cookie/Token。
 - `--direct-behavior-batch`：直接 POST 到 `/api/v1/behavior-events/batch`。
-- `--verbose`：打印任务、脱敏后的 Agent Reach route/status、Codex 分析结果、behavior_event JSON 和后端响应。
+- `--verbose`：打印任务、脱敏后的 Agent Reach route/status、TRAE/Codex 分析结果、behavior_event JSON 和后端响应。
 - `--dry-run`：只打印结果，不写后端。
 
 ## 项目结构分析
@@ -257,6 +286,7 @@ scripts/
   test_*.py                worker 与策略测试
 
 docs/
+  trae-xiaohongshu-demo-guide.md TRAE CLI 小红书主演示手册
   技术沉淀.md              本地 worker/LLM/安全边界设计沉淀
   api-reference.md         API 说明
   agent-task-architecture.md Agent 任务架构
@@ -285,7 +315,8 @@ $demoPython = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\depe
 
 ## 关键文档
 
-- 演示: [docs/xiaohongshu-demo-guide.md](docs/xiaohongshu-demo-guide.md)
+- TRAE 小红书主演示: [docs/trae-xiaohongshu-demo-guide.md](docs/trae-xiaohongshu-demo-guide.md)
+- 通用小红书演示: [docs/xiaohongshu-demo-guide.md](docs/xiaohongshu-demo-guide.md)
 - 当前目标完成度: [docs/completion-assessment.md](docs/completion-assessment.md)
 - API: [docs/api-reference.md](docs/api-reference.md)
 - Worker 架构: [docs/agent-task-architecture.md](docs/agent-task-architecture.md)

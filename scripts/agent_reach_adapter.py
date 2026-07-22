@@ -90,7 +90,8 @@ class AgentReachAdapter:
         doctor_error = ""
         doctor: dict[str, Any] = {}
         if agent_reach:
-            completed = self.process_runner([agent_reach, "doctor", "--json"], self.settings.timeout)
+            # Current Agent Reach releases do not expose a --json flag here.
+            completed = self.process_runner([agent_reach, "doctor"], self.settings.timeout)
             if completed.returncode == 0:
                 doctor = decode_json_object(completed.stdout)
             else:
@@ -180,7 +181,27 @@ class AgentReachAdapter:
 
         xhs = self.tool_resolver("xhs")
         if xhs and (not backend or "xhs" in backend):
-            return self._execute([xhs, "read", original_url], "xiaohongshu-note", "xhs-cli")
+            xhs_result = self._execute(
+                [xhs, "read", original_url], "xiaohongshu-note", "xhs-cli")
+            if xhs_result.success:
+                return xhs_result
+
+            # xhs-cli can fail when its locally managed cookies are stale.
+            # If the user explicitly allowed authenticated-browser access and
+            # already opened the submitted note, reuse only that visible tab.
+            # This keeps the fallback local and never exports browser secrets.
+            if opencli:
+                visible_result = self._read_current_xiaohongshu_tab(opencli, original_url)
+                if visible_result.success:
+                    return visible_result
+            if not opencli:
+                return ToolResult(
+                    False, "xiaohongshu-visible-tab", "unavailable",
+                    error=(
+                        "OpenCLI is not installed, so the authorized visible Chrome tab cannot be read; "
+                        "xhs-cli authentication is also unavailable"
+                    ))
+            return xhs_result
 
         return ToolResult(False, "xiaohongshu-note", backend or "unavailable",
                           error="no supported Xiaohongshu Agent Reach backend is available")
