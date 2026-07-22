@@ -36,6 +36,12 @@ class ApiMockMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UP"));
 
+        mockMvc.perform(get("/api/v1/demo-system/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ready").value(true))
+                .andExpect(jsonPath("$.database").value("H2"))
+                .andExpect(jsonPath("$.profile").value("test"));
+
         mockMvc.perform(get("/api/recommendations/today")
                         .param("userId", "no-data-user"))
                 .andExpect(status().isOk())
@@ -774,6 +780,108 @@ class ApiMockMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("EMPTY"))
                 .andExpect(jsonPath("$.recommendations", hasSize(0)));
+    }
+
+    @Test
+    @Order(11)
+    void xiaohongshuDemoSnapshotShowsAgentReachAndAiEvidence() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "xhs-demo-user",
+                                      "platform": "xiaohongshu",
+                                      "source": "codex-cli-analysis",
+                                      "eventType": "VISIT",
+                                      "externalId": "demo-note-1",
+                                      "title": "小红书 AI 效率工具公开笔记",
+                                      "url": "https://www.xiaohongshu.com/explore/demo-note-1",
+                                      "author": "演示账号",
+                                      "contentSnippet": "这条公开笔记介绍如何用 AI Agent 整理每日信息。",
+                                      "tags": ["AI工具", "效率", "信息整理"],
+                                      "interestCategory": "AI效率工具",
+                                      "intent": "学习工作流",
+                                      "confidence": "HIGH",
+                                      "dataLevel": "PAGE_VISIBLE_CONTENT",
+                                      "detectionReason": "public_url_enrichment",
+                                      "matchedKeyword": "xiaohongshu.com",
+                                      "rawEvidence": {
+                                        "adapter": "agent-reach",
+                                        "adapterMode": "live",
+                                        "agentReachStatus": "SUCCESS",
+                                        "agentReachRoute": "opencli-xiaohongshu-note",
+                                        "agentReachBackend": "opencli",
+                                        "llm_status": "SUCCESS",
+                                        "llm_latency_ms": 812
+                                      }
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activities[0].source").value("codex-cli-analysis"))
+                .andExpect(jsonPath("$.activities[0].rawEvidence.agentReachStatus").value("SUCCESS"))
+                .andExpect(jsonPath("$.activities[0].rawEvidence.llm_status").value("SUCCESS"));
+
+        mockMvc.perform(get("/api/v1/demo-snapshots/xiaohongshu")
+                        .param("userId", "xhs-demo-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("xhs-demo-user"))
+                .andExpect(jsonPath("$.readiness.ready").value(true))
+                .andExpect(jsonPath("$.readiness.agentReachLive").value(true))
+                .andExpect(jsonPath("$.readiness.aiAnalyzed").value(true))
+                .andExpect(jsonPath("$.usage.overallConfidence").value("HIGH"))
+                .andExpect(jsonPath("$.usage.pageContentSignals", hasSize(1)))
+                .andExpect(jsonPath("$.visits[0].agentReachBackend").value("opencli"))
+                .andExpect(jsonPath("$.visits[0].llmStatus").value("SUCCESS"))
+                .andExpect(jsonPath("$.visits[0].llmLatencyMs").value(812))
+                .andExpect(jsonPath("$.profile.topInterests", hasSize(greaterThanOrEqualTo(1))))
+                .andExpect(jsonPath("$.recommendations.recommendations", hasSize(greaterThanOrEqualTo(1))));
+    }
+
+    @Test
+    @Order(12)
+    void xiaohongshuUrlWithoutPageEvidenceIsNotReportedAsHighConfidenceContent() throws Exception {
+        mockMvc.perform(post("/api/v1/behavior-events/batch")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "events": [
+                                    {
+                                      "userId": "xhs-url-only-user",
+                                      "platform": "xiaohongshu",
+                                      "source": "codex-cli-analysis",
+                                      "eventType": "VISIT",
+                                      "title": "待读取的小红书链接",
+                                      "url": "https://www.xiaohongshu.com/explore/url-only-note",
+                                      "tags": ["xiaohongshu", "public-url"],
+                                      "confidence": "LOW",
+                                      "dataLevel": "PUBLIC_URL",
+                                      "detectionReason": "user_shared_url",
+                                      "rawEvidence": {
+                                        "adapter": "agent-reach",
+                                        "agentReachStatus": "FALLBACK",
+                                        "llm_status": "SUCCESS"
+                                      }
+                                    }
+                                  ]
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/platforms/xiaohongshu/usage-summary")
+                        .param("userId", "xhs-url-only-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.overallConfidence").value("NONE"))
+                .andExpect(jsonPath("$.pageContentSignals", hasSize(0)));
+
+        mockMvc.perform(get("/api/v1/demo-snapshots/xiaohongshu")
+                        .param("userId", "xhs-url-only-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.readiness.ready").value(false))
+                .andExpect(jsonPath("$.readiness.agentReachLive").value(false));
     }
 
     @Test

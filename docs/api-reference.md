@@ -1,3 +1,103 @@
+## Demo System Status
+
+### GET /api/v1/demo-system/status
+
+使用 JDBC metadata 返回当前实际数据源，不包含连接 URL、账号或密码。Vue 同时检查该接口与
+`/actuator/health`，避免把 H2 回退模式误显示为 MySQL。
+
+```json
+{
+  "ready": true,
+  "database": "MySQL",
+  "databaseVersion": "8.0.46",
+  "profile": "mysql",
+  "message": "本地数据库连接正常。"
+}
+```
+
+## Xiaohongshu Demo Snapshot
+
+### GET /api/v1/demo-snapshots/xiaohongshu
+
+返回小红书现场演示所需的只读聚合快照，包括最近访问记录、Agent Reach/Codex 执行状态、
+小红书 24 小时信号汇总、v2 用户画像和今日推荐。
+
+Query:
+
+| Param | Required | Description |
+| --- | --- | --- |
+| `userId` | No | 用户标识；开启鉴权后以后端会话用户为准 |
+
+`readiness` 中的五项状态必须全部为 `true`，`ready` 才会为 `true`。安全入库的执行证据包括
+`adapterMode`、`agentReachStatus/Route/Backend`、`llmStatus` 和 `llmLatencyMs`；命令原文、
+Cookie、Token、Session 与错误敏感上下文不会返回。
+
+```json
+{
+  "userId": "xhs-demo",
+  "generatedAt": "2026-07-22T10:30:00",
+  "readiness": {
+    "ready": true,
+    "visitCaptured": true,
+    "agentReachLive": true,
+    "aiAnalyzed": true,
+    "profileReady": true,
+    "recommendationsReady": true,
+    "hints": ["演示链路已就绪：访问记录、Agent Reach、Codex 分析、画像和推荐均有结果。"]
+  },
+  "degraded": false,
+  "components": [
+    {"component": "usage", "status": "UP", "message": "数据读取成功"},
+    {"component": "visits", "status": "UP", "message": "数据读取成功"},
+    {"component": "profile", "status": "UP", "message": "数据读取成功"},
+    {"component": "recommendations", "status": "UP", "message": "数据读取成功"}
+  ],
+  "visits": [
+    {
+      "title": "公开笔记标题",
+      "url": "https://www.xiaohongshu.com/explore/example",
+      "summary": "Codex 生成的非敏感语义摘要",
+      "agentReachStatus": "SUCCESS",
+      "agentReachBackend": "opencli",
+      "llmStatus": "SUCCESS",
+      "llmLatencyMs": 812,
+      "interestCategory": "AI效率工具"
+    }
+  ]
+}
+```
+
+## Local Agent Worker
+
+### POST /api/agent/worker/start-once
+
+仅允许从本机 loopback 地址调用。在 Windows 上打开一个可见 PowerShell 窗口，运行一次
+Python worker。Vue 已完成明确单次授权时，`confirmedByUser=true` 会避免终端重复确认；
+PowerShell 仍展示完整阶段日志。接口不会接收 Cookie、Token、Session 或账号密码。
+
+```json
+{
+  "dryRun": false,
+  "limit": 20,
+  "allowAuthenticatedBrowser": true,
+  "agentReachMode": "live",
+  "confirmedByUser": true,
+  "taskId": "query-12345678-1234-1234-1234-123456789abc"
+}
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `dryRun` | No | `true` 时只分析和打印，不回写后端 |
+| `limit` | No | 本次最多领取的任务数，服务端限制为 1–100 |
+| `allowAuthenticatedBrowser` | No | 显式允许本次复用现有浏览器登录会话读取用户提交的小红书公开链接；默认 `false` |
+| `agentReachMode` | No | `auto`、`live` 或 `off`；小红书真实演示使用 `live` |
+| `confirmedByUser` | No | 表示本次请求已在 Vue 页面完成明确授权；读取登录浏览器时必须为 `true` |
+| `taskId` | No | 仅领取该任务；Vue 演示必须传入刚创建的任务编号，避免处理旧任务 |
+
+`python-command: auto` 会优先使用 Codex Desktop 已安装的 Python 运行时；其他环境可通过
+`assistant.local-worker.python-command` 显式指定可信 Python 命令。
+
 ## Daily Profile
 
 ### GET /api/profile/daily
@@ -77,7 +177,7 @@ Standard event example:
       "rawMetadata": {
         "domain": "github.com",
         "adapter": "agent-reach",
-        "adapterMode": "mock"
+        "adapterMode": "live"
       },
       "occurredAt": "2026-06-12T10:00:00"
     }
@@ -705,6 +805,5 @@ Response:
 
 | URL | Description |
 | --- | --- |
-| `http://localhost:8088/` | Simple habit submission page served by Nginx |
-| `http://localhost:8088/assistant/` | Full profile and recommendation UI proxied to Spring Boot |
-| `http://localhost:8080/` | Full Spring Boot UI without Nginx |
+| `http://localhost:8088/` | Vue demo UI served by Nginx; `/api` and `/actuator` proxy to Spring Boot |
+| `http://localhost:8080/` | The same Vue demo UI served directly by Spring Boot |

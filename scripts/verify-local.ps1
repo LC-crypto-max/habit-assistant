@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$JarPath = ".\target\habit-assistant-java-0.0.1-SNAPSHOT.jar",
     [string]$BaseUrl = "http://localhost:8080",
     [int]$StartupTimeoutSeconds = 15
@@ -41,6 +41,41 @@ function Show-LastLogs {
     if (Test-Path $ErrLog) { Get-Content $ErrLog -Encoding UTF8 -Tail 100 }
 }
 
+function Get-JavaVersionText {
+    param([string]$JavaPath)
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $JavaPath
+    $startInfo.Arguments = "-version"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $output = $process.StandardOutput.ReadToEnd()
+    $errorOutput = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+        throw "Unable to read Java version. exitCode=$($process.ExitCode)"
+    }
+    return "$errorOutput`n$output".Trim()
+}
+
+function Normalize-WindowsPathEnvironment {
+    $variables = [Environment]::GetEnvironmentVariables("Process")
+    $pathValue = $null
+    foreach ($key in @($variables.Keys)) {
+        if ([string]$key -ieq "Path") {
+            if (-not $pathValue) {
+                $pathValue = [string]$variables[$key]
+            }
+            [Environment]::SetEnvironmentVariable([string]$key, $null, "Process")
+        }
+    }
+    if ($pathValue) {
+        [Environment]::SetEnvironmentVariable("Path", $pathValue, "Process")
+    }
+}
+
 if (-not (Test-Path $JarPath)) {
     throw "Jar not found: $JarPath. Run mvn package first."
 }
@@ -55,58 +90,46 @@ Remove-Item -LiteralPath $outLog -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $errLog -Force -ErrorAction SilentlyContinue
 
 $process = $null
-$stdoutWriter = $null
-$stderrWriter = $null
 
 try {
     Stop-Port8080
 
-    $javaPath = (Get-Command java -ErrorAction Stop).Source
+    $bundledJava = Get-ChildItem -LiteralPath ".\.local-tools\jdk17" -Recurse -Filter "java.exe" -ErrorAction SilentlyContinue `
+        | Where-Object { $_.FullName -match '[\\/]bin[\\/]java\.exe$' } `
+        | Select-Object -First 1
+    $javaPath = if ($bundledJava) { $bundledJava.FullName } else { (Get-Command java -ErrorAction Stop).Source }
+    $javaVersionText = Get-JavaVersionText -JavaPath $javaPath
+    if ($javaVersionText -notmatch 'version "(1[7-9]|[2-9][0-9])') {
+        throw "Local verification requires JDK 17 or newer. Detected: $javaVersionText"
+    }
     $appArguments = @(
         "-jar",
         "`"$([System.IO.Path]::GetFullPath($JarPath))`"",
+        "--spring.profiles.active=h2",
         "--spring.datasource.url=`"jdbc:h2:mem:habit_verify;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false`"",
         "--spring.jpa.hibernate.ddl-auto=create-drop",
         "--spring.main.lazy-initialization=true",
         "--assistant.daily-cron=-",
         "--assistant.history-import.enabled=false",
         "--assistant.history-import.cron=-",
+        "--assistant.history-import.directory=./target/verify-imports/history",
+        "--assistant.history-import.archive-directory=./target/verify-imports/history/archive",
+        "--assistant.history-import.failed-directory=./target/verify-imports/history/failed",
         "--assistant.collectors.rss.enabled=false",
         "--assistant.collectors.json-api.enabled=false",
         "--assistant.collectors.x.enabled=false",
         "--assistant.feishu.webhook-url="
     )
 
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = $javaPath
-    $startInfo.Arguments = ($appArguments -join " ")
-    $startInfo.WorkingDirectory = (Get-Location).Path
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-
-    $stdoutWriter = New-Object System.IO.StreamWriter($outLog, $false, [System.Text.Encoding]::UTF8)
-    $stderrWriter = New-Object System.IO.StreamWriter($errLog, $false, [System.Text.Encoding]::UTF8)
-    $stdoutWriter.AutoFlush = $true
-    $stderrWriter.AutoFlush = $true
-
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    $process.EnableRaisingEvents = $true
-    $process.add_OutputDataReceived({
-        if ($EventArgs.Data -ne $null) {
-            $stdoutWriter.WriteLine($EventArgs.Data)
-        }
-    })
-    $process.add_ErrorDataReceived({
-        if ($EventArgs.Data -ne $null) {
-            $stderrWriter.WriteLine($EventArgs.Data)
-        }
-    })
-    [void]$process.Start()
-    $process.BeginOutputReadLine()
-    $process.BeginErrorReadLine()
+    Normalize-WindowsPathEnvironment
+    $process = Start-Process `
+        -FilePath $javaPath `
+        -ArgumentList $appArguments `
+        -WorkingDirectory (Get-Location).Path `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $outLog `
+        -RedirectStandardError $errLog `
+        -PassThru
 
     Write-Host "Started app pid=$($process.Id)"
 
@@ -170,6 +193,4 @@ try {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         $process.WaitForExit(5000) | Out-Null
     }
-    if ($stdoutWriter) { $stdoutWriter.Dispose() }
-    if ($stderrWriter) { $stderrWriter.Dispose() }
 }

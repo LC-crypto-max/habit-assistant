@@ -11,6 +11,7 @@ import java.util.Map;
 
 public record AgentInterestItemRequest(
         @NotBlank String platform,
+        String source,
         @JsonAlias("eventType") ActivityType type,
         String externalId,
         String title,

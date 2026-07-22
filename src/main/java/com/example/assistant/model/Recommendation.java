@@ -1,5 +1,6 @@
 package com.example.assistant.model;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -16,6 +17,7 @@ public class Recommendation {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(length = 120)
     private String userId;
 
     private Long contentItemId;
@@ -24,6 +26,7 @@ public class Recommendation {
 
     private double score;
 
+    @Column(length = 2000)
     private String reason;
 
     @Enumerated(EnumType.STRING)

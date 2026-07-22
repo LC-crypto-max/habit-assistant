@@ -89,7 +89,7 @@ Level 3：浏览器插件 / 客户端上报
 chcp 65001
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-py -3 .\scripts\codex_query_worker.py --once --base-url http://localhost:8080
+python .\scripts\codex_query_worker.py --once --base-url http://localhost:8080
 ```
 
 Python 侧要求：

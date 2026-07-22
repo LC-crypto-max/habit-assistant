@@ -146,7 +146,7 @@ public class DataMigrationService {
                 activity.getUrl(),
                 activity.getText(),
                 activity.getOccurredAt(),
-                activity.getTags(),
+                activity.getTags() == null ? List.of() : List.copyOf(activity.getTags()),
                 activity.getConfidence(),
                 activity.getDataLevel(),
                 activity.getSource(),
@@ -167,7 +167,7 @@ public class DataMigrationService {
                 content.getPublishedAt(),
                 content.getCollectedAt(),
                 content.getContentHash(),
-                content.getTags());
+                content.getTags() == null ? List.of() : List.copyOf(content.getTags()));
     }
 
     private RecommendationBackupRecord toRecommendationRecord(Recommendation recommendation) {

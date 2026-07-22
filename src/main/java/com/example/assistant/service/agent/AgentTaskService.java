@@ -99,7 +99,7 @@ public class AgentTaskService {
                 userId,
                 platform,
                 item.type() == null ? inferType(item.url(), item.title(), item.text()) : item.type(),
-                adapter(request),
+                firstNonBlank(item.source(), adapter(request)),
                 item.externalId(),
                 firstNonBlank(item.title(), item.summary(), item.url(), request.title()),
                 item.url(),

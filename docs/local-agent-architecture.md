@@ -60,22 +60,22 @@ flowchart LR
 
 ## 4. PowerShell/命令行如何运行
 
-### 4.1 预览本机应用窗口
+### 4.1 预览本机任务结果
 
 不会上传，只查看脚本能采集到什么：
 
 ```powershell
-py -3 .\scripts\codex_app_proxy.py --user-id alice --dry-run
+python .\scripts\codex_query_worker.py --once --dry-run
 ```
 
 如果本机没有安装正式 Python，而 `py` 或 `python` 指向 Microsoft Store 占位符，需要先安装 Python，或者使用 Codex 自带 Python 路径。
 
-### 4.2 采集一次并上传
+### 4.2 领取一次任务并上传
 
 默认会先列出窗口，并询问是否上传：
 
 ```powershell
-py -3 .\scripts\codex_app_proxy.py --user-id alice --once --base-url http://localhost:8080
+python .\scripts\codex_query_worker.py --once --base-url http://localhost:8080 --direct-behavior-batch
 ```
 
 终端会显示类似：
@@ -89,28 +89,18 @@ Upload these app usage events to backend? [y/N]
 
 输入 `y` 才会上传。
 
-### 4.3 自动上传，跳过确认
+### 4.3 本地可信环境跳过确认
 
 仅建议自己本地测试时使用：
 
 ```powershell
-py -3 .\scripts\codex_app_proxy.py --user-id alice --once --yes --base-url http://localhost:8080
+$demoPython = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+& $demoPython .\scripts\codex_query_worker.py --once --yes `
+  --base-url http://localhost:8080 --direct-behavior-batch
 ```
 
-### 4.4 启动本地代理服务
-
-```powershell
-py -3 .\scripts\codex_app_proxy.py --serve --user-id alice --port 8765
-```
-
-可用接口：
-
-| Method | Path | 说明 |
-| --- | --- | --- |
-| `GET` | `http://127.0.0.1:8765/health` | 本地代理健康检查 |
-| `GET` | `http://127.0.0.1:8765/apps` | 查看当前可见应用窗口 |
-| `POST` | `http://127.0.0.1:8765/collect/apps` | 采集并上传应用行为 |
-| `POST` | `http://127.0.0.1:8765/proxy/behavior-events/batch` | 转发 behavior batch |
+`codex_query_worker.py` 是唯一的本地采集入口。旧的 `codex_app_proxy.py`
+已删除，避免窗口采集、脱敏和上传规则存在两套实现。
 
 ## 5. 后端如何“调用 Codex CLI”
 
@@ -159,7 +149,7 @@ POST /api/agent/queries/{taskId}/result
 
 第一阶段：当前可落地
 
-- 使用 `scripts/codex_app_proxy.py` 手动采集可见窗口
+- 使用 `scripts/codex_query_worker.py` 领取经用户授权的采集任务
 - 使用浏览器历史导入脚本
 - 使用小程序/飞书/网页主动提交数据
 

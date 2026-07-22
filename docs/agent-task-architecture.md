@@ -73,33 +73,42 @@ Public entry point:
 enrich_public_url(item: dict) -> dict
 ```
 
-Phase 1 runs in mock/dry-run mode and does not perform network access. It prints
-the command that a future real adapter can execute:
+The adapter now executes the channel commands documented by Agent Reach. Run a
+local, non-sensitive diagnostic first:
 
 ```text
-[AgentReach] 即将执行命令: agent-reach read --url "<url>" --platform "<platform>" --dry-run
-[AgentReach] 返回结果: {...}
+python scripts/agent_reach_adapter.py --doctor
 ```
 
 Routing:
 
-- `bilibili` -> `read_bilibili(url)`
-- `youtube` -> `read_youtube(url)`
-- `xiaohongshu` -> `read_xiaohongshu_public(url)`
-- `github` -> `read_github(url)`
-- `web` -> `read_web_page(url)`
+- `bilibili` -> `bili video BV...`
+- `youtube` -> `yt-dlp --dump-single-json --skip-download ...`
+- `xiaohongshu` -> `opencli xiaohongshu note URL -f json` (only with
+  `--allow-authenticated-browser`)
+- public web/GitHub/article URLs -> Jina Reader through `curl`
 
-The adapter returns normalized, non-private behavior data with
-`source=agent-reach-enrichment`, `dataLevel=PAGE_VISIBLE_CONTENT`, and
-`confidence=HIGH`. Raw evidence is sanitized and limited to safe metadata such as
-domain, visit count, adapter mode, and the dry-run command string.
+Only a successful tool read is marked `source=agent-reach-enrichment`,
+`dataLevel=PAGE_VISIBLE_CONTENT`, and `confidence=HIGH`. A missing/failed tool
+keeps the original browser-history confidence and records a sanitized fallback
+status. Command arguments and login credentials are never persisted. URLs are
+stored without tracking or sensitive query parameters such as `xsec_token`.
 
 Verbose worker tracing:
 
 ```powershell
-py -3 scripts/codex_query_worker.py --once --yes --use-codex-cli --direct-behavior-batch --verbose
+$demoPython = "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+& $demoPython scripts/codex_query_worker.py --once --yes --direct-behavior-batch --verbose
 ```
 
-`--verbose` prints the current task, collected browser/public URL items, Agent
-Reach dry-run command and output, Codex CLI command/input/output, final
-`behavior_event` JSON, and the backend POST URL plus response.
+For a supplied Xiaohongshu public note URL, explicitly allow local OpenCLI to
+reuse the existing browser login:
+
+```powershell
+& $demoPython scripts/codex_query_worker.py --once --direct-behavior-batch `
+  --agent-reach-mode live --allow-authenticated-browser
+```
+
+The worker never exports that login state. It waits for Codex semantic analysis
+before posting the normalized `behavior_event`, so tags and summaries are
+available to the profile builder immediately.

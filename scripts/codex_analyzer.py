@@ -34,6 +34,12 @@ class CodexAnalyzer:
     def should_analyze(self, item: dict[str, Any]) -> bool:
         event_type = self.sanitize(item.get("eventType") or item.get("type") or "", 40).upper()
         url = self.sanitize(item.get("url") or "", 600)
+        platform = self.sanitize(item.get("platform") or "", 80).lower()
+        raw = item.get("rawMetadata") or item.get("rawEvidence") or {}
+        if platform in {"xiaohongshu", "xhs"} and isinstance(raw, dict):
+            agent_reach_status = self.sanitize(raw.get("agentReachStatus") or "", 40).upper()
+            if agent_reach_status and agent_reach_status != "SUCCESS":
+                return False
         return bool(url) and event_type in {"VISIT", "WATCH", "FAVORITE"}
 
     def mark_pending_or_failed(self, item: dict[str, Any]) -> None:

@@ -1,6 +1,7 @@
 package com.example.assistant.model;
 
 import jakarta.persistence.ElementCollection;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -16,22 +17,29 @@ public class ContentItem {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(length = 80)
     private String platform;
 
+    @Column(length = 200)
     private String externalId;
 
+    @Column(length = 512)
     private String title;
 
+    @Column(length = 2048)
     private String url;
 
+    @Column(length = 300)
     private String author;
 
+    @Column(columnDefinition = "TEXT")
     private String summary;
 
     private LocalDateTime publishedAt;
 
     private LocalDateTime collectedAt;
 
+    @Column(length = 64, unique = true)
     private String contentHash;
 
     @ElementCollection

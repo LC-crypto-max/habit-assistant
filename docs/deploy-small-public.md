@@ -160,4 +160,4 @@ data/backups/YYYYMMDD_HHmmss/
 - 用户在自己的电脑运行 `scripts/codex_query_worker.py`。
 - worker 只回传授权范围内的非敏感摘要。
 - 不读取 Cookie、Token、Session、账号密码、聊天记录、私信、支付记录。
-- 如果启用 `--use-codex-cli`，Codex CLI 只分析 worker 已采集的 `raw_items`，不自行读取系统文件或联网抓取。
+- Codex CLI 只分析 worker 已采集并脱敏的公开上下文，在隔离临时目录中运行，不自行读取项目文件或联网抓取。

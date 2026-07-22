@@ -111,7 +111,7 @@ public class ActivityService {
                 activity.getUrl(),
                 activity.getText(),
                 activity.getOccurredAt(),
-                activity.getTags(),
+                activity.getTags() == null ? List.of() : List.copyOf(activity.getTags()),
                 activity.getConfidence(),
                 activity.getDataLevel(),
                 activity.getSource(),
@@ -221,7 +221,11 @@ public class ActivityService {
         safe.put("contentSnippet", limit(rawEvidence.get("contentSnippet"), 420));
         safe.put("adapter", limit(rawEvidence.get("adapter"), 80));
         safe.put("adapterMode", limit(rawEvidence.get("adapterMode"), 80));
-        safe.put("agentReachCommand", limit(rawEvidence.get("agentReachCommand"), 500));
+        safe.put("agentReachStatus", limit(rawEvidence.get("agentReachStatus"), 40));
+        safe.put("agentReachRoute", limit(rawEvidence.get("agentReachRoute"), 120));
+        safe.put("agentReachBackend", limit(rawEvidence.get("agentReachBackend"), 120));
+        safe.put("llm_status", limit(rawEvidence.get("llm_status"), 40));
+        safe.put("llm_latency_ms", boundedInteger(rawEvidence.get("llm_latency_ms"), 600_000));
         safe.put("originalSource", limit(rawEvidence.get("originalSource"), 120));
         safe.put("contentType", limit(rawEvidence.get("contentType"), 80));
         safe.put("interestCategory", limit(rawEvidence.get("interestCategory"), 120));
@@ -269,6 +273,17 @@ public class ActivityService {
         }
         try {
             return Math.max(0, Integer.parseInt(String.valueOf(value)));
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
+
+    private int boundedInteger(Object value, int maximum) {
+        if (value instanceof Number number) {
+            return Math.max(0, Math.min(number.intValue(), maximum));
+        }
+        try {
+            return Math.max(0, Math.min(Integer.parseInt(String.valueOf(value)), maximum));
         } catch (RuntimeException e) {
             return 0;
         }

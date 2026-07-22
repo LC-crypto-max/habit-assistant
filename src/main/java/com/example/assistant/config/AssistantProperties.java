@@ -446,7 +446,7 @@ public class AssistantProperties {
         private boolean enabled = false;
         private String baseUrl = "http://localhost:8080";
         private String scriptPath = "scripts/codex_query_worker.py";
-        private String pythonCommand = "py -3";
+        private String pythonCommand = "auto";
         private int limit = 20;
 
         public boolean isEnabled() {

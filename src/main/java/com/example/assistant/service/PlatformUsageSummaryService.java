@@ -10,6 +10,7 @@ import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PlatformUsageSummaryService {
@@ -24,6 +25,7 @@ public class PlatformUsageSummaryService {
         this.userContext = userContext;
     }
 
+    @Transactional(readOnly = true)
     public PlatformUsageSummaryResponse xiaohongshu(String userId) {
         String resolvedUserId = userContext.resolve(userId);
         List<UserActivity> activities = userActivityRepository
@@ -42,8 +44,13 @@ public class PlatformUsageSummaryService {
                 .toList();
         List<PlatformUsageSummaryResponse.Signal> pages = activities.stream()
                 .filter(this::isXiaohongshuPageContentSignal)
-                .map(activity -> toSignal(activity, "browser-extension", "HIGH", "PAGE_VISIBLE_CONTENT",
-                        "browser_extension", "xiaohongshu"))
+                .map(activity -> toSignal(
+                        activity,
+                        firstNonBlank(activity.getSource(), "page-visit"),
+                        firstNonBlank(activity.getConfidence(), "HIGH"),
+                        firstNonBlank(activity.getDataLevel(), "PAGE_VISIBLE_CONTENT"),
+                        firstNonBlank(activity.getDetectionReason(), "page_visible_content"),
+                        firstNonBlank(activity.getMatchedKeyword(), "xiaohongshu")))
                 .limit(20)
                 .toList();
         String confidence = !pages.isEmpty() ? "HIGH" : !history.isEmpty() ? "MEDIUM" : !windows.isEmpty() ? "LOW" : "NONE";
@@ -64,7 +71,7 @@ public class PlatformUsageSummaryService {
                 windows,
                 history,
                 pages,
-                "如果想提高小红书访问识别准确度，建议使用 Edge/Chrome 访问小红书网页版后导入浏览器历史，或后续启用浏览器插件。");
+                "演示真实公开笔记时，可提交小红书链接并显式授权本地 Worker 复用当前浏览器会话；系统不会保存 Cookie、Token 或 Session。");
     }
 
     private PlatformUsageSummaryResponse.Signal toSignal(UserActivity activity, String source, String confidence,
@@ -98,7 +105,18 @@ public class PlatformUsageSummaryService {
     private boolean isXiaohongshuPageContentSignal(UserActivity activity) {
         String url = normalize(activity.getUrl());
         return (url.contains("xiaohongshu.com") || url.contains("xhslink.com"))
-                && (hasTag(activity, "browser-extension") || hasTag(activity, "page-visit"));
+                && (hasTag(activity, "browser-extension")
+                        || hasTag(activity, "page-visit")
+                        || "PAGE_VISIBLE_CONTENT".equalsIgnoreCase(safe(activity.getDataLevel())));
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
     }
 
     private String detectionReason(UserActivity activity) {

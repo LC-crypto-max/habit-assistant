@@ -23,7 +23,6 @@ from ctypes import wintypes
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -40,8 +39,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from agent_reach_adapter import enrich_public_url
-from llm_gateway import LLMGateway
+from agent_reach_adapter import AgentReachAdapter, AgentReachSettings, enrich_public_url
 from worker_llm_gateway import WorkerLLMGateway
 
 try:
@@ -53,6 +51,7 @@ except Exception:
 
 DEFAULT_BASE_URL = "http://localhost:8080"
 DEFAULT_ALLOWED_DIRS = ["data/imports", "data/local-notes"]
+DEFAULT_CODEX_COMMAND = "codex exec --ephemeral --sandbox read-only --skip-git-repo-check -"
 SAFE_TEXT_LIMIT = 500
 SUMMARY_TEXT_LIMIT = 420
 CONTENT_TEXT_LIMIT = 1200
@@ -210,7 +209,6 @@ ALLOWED_DETECTION_REASONS = {
     "page_visible_content",
     "public_url_enrichment",
 }
-YOUTUBE_INTEREST_CATEGORIES = {"backend", "AI", "entertainment", "education", "other"}
 TRACKING_QUERY_PARAMS = {
     "utm_source",
     "utm_medium",
@@ -223,6 +221,18 @@ TRACKING_QUERY_PARAMS = {
     "si",
     "fbclid",
     "gclid",
+    "access_token",
+    "auth",
+    "authorization",
+    "code",
+    "cookie",
+    "key",
+    "password",
+    "session",
+    "signature",
+    "token",
+    "xsec_token",
+    "xsec_source",
 }
 SENSITIVE_FIELD_NAMES = {
     "cookie",
@@ -259,13 +269,14 @@ class WorkerConfig:
     allowed_dirs: list[str]
     limit: int
     poll_seconds: float
-    use_codex_cli: bool
     codex_command: str
-    print_codex_prompt: bool
-    print_codex_output: bool
     codex_timeout: int
     direct_behavior_batch: bool
     verbose: bool
+    agent_reach_mode: str = "auto"
+    agent_reach_timeout: int = 30
+    allow_authenticated_browser: bool = False
+    task_id: str = ""
 
 
 def now_iso() -> str:
@@ -385,21 +396,6 @@ def find_tool(name: str) -> str | None:
     return shutil.which(name, path=tool_env().get("PATH"))
 
 
-def find_codex_cli(command: str) -> str | None:
-    command = (command or "codex").strip()
-    if not command:
-        command = "codex"
-    first_token = split_command(command)[0]
-    return shutil.which(first_token, path=tool_env().get("PATH"))
-
-
-def split_command(command: str) -> list[str]:
-    command = (command or "codex").strip()
-    if not command:
-        return ["codex"]
-    return shlex.split(command, posix=os.name != "nt")
-
-
 def verbose_log(enabled: bool, message: str) -> None:
     if enabled:
         print(message)
@@ -434,9 +430,10 @@ def post_json(url: str, payload: dict[str, Any], timeout: int = 15) -> dict[str,
         raise RuntimeError(f"HTTP {exc.code}: {error_body}") from exc
 
 
-def claim_next(base_url: str) -> dict[str, Any] | None:
+def claim_next(base_url: str, task_id: str = "") -> dict[str, Any] | None:
     try:
-        task = post_json(base_url.rstrip("/") + "/api/agent/queries/claim-next", {})
+        path = f"/api/agent/queries/{urllib.parse.quote(task_id)}/claim" if task_id else "/api/agent/queries/claim-next"
+        task = post_json(base_url.rstrip("/") + path, {})
     except RuntimeError as exc:
         if "NO_PENDING_AGENT_QUERY" in str(exc):
             return None
@@ -499,338 +496,6 @@ def normalize_result_item(item: dict[str, Any]) -> dict[str, Any]:
     normalized = sanitize_item(item, allow_sensitive_check=False)
     normalized["occurredAt"] = dto_local_datetime(normalized.get("occurredAt"))
     return normalized
-
-
-def build_codex_prompt(task: dict[str, Any], raw_items: list[dict[str, Any]]) -> str:
-    safe_task = {
-        "taskId": sanitize(task.get("taskId") or "", 120),
-        "userId": sanitize(task.get("userId") or "", 120),
-        "platform": sanitize(task.get("platform") or "", 80),
-        "intent": sanitize(task.get("intent") or "", 120),
-        "url": sanitize(task.get("url") or "", 300),
-        "query": sanitize(task.get("query") or "", 300),
-    }
-    safe_items = [sanitize_item(item, allow_sensitive_check=False) for item in raw_items]
-    return (
-        "你是 Habit Assistant 的本地兴趣数据分析器。\n"
-        "你只能基于我提供的 raw_items 做分析。\n"
-        "不要访问文件系统。\n"
-        "不要读取 Cookie、Token、Session、账号密码、聊天记录、私信、支付记录。\n"
-        "不要调用外部网络。\n"
-        "不要推测不存在的访问记录。\n"
-        "如果 raw_items 中 url 为空，不允许补写或编造 URL。\n"
-        "如果数据来自 visible-window，只能标记为 LOW confidence。\n"
-        "如果数据来自 browser-history，可标记为 MEDIUM confidence。\n"
-        "如果数据来自 browser-extension/page-visit，可标记为 HIGH confidence。\n"
-        "请只返回 JSON，不要返回 Markdown。\n\n"
-        "输出格式必须是：\n"
-        "{\n"
-        '  "items": [\n'
-        "    {\n"
-        '      "userId": "me",\n'
-        '      "platform": "youtube | bilibili | baidu | xiaohongshu | web",\n'
-        '      "source": "visible-window | browser-history | page-visit | local-notes | public-url | agent-reach-enrichment | codex-cli-analysis",\n'
-        '      "eventType": "VISIT | WATCH | SEARCH | FAVORITE | APP_USAGE",\n'
-        '      "externalId": "",\n'
-        '      "title": "",\n'
-        '      "url": "",\n'
-        '      "author": "",\n'
-        '      "contentSnippet": "",\n'
-        '      "tags": [],\n'
-        '      "confidence": "LOW | MEDIUM | HIGH",\n'
-        '      "dataLevel": "APP_USAGE_SNAPSHOT | BROWSER_HISTORY | PAGE_VISIBLE_CONTENT | PUBLIC_URL | LOCAL_NOTE",\n'
-        '      "detectionReason": "process_name | window_title | url_domain | browser_history | page_visible_content",\n'
-        '      "matchedKeyword": "",\n'
-        '      "interestTags": [],\n'
-        '      "interestLabels": [],\n'
-        '      "contentType": "video | note | article | web-page",\n'
-        '      "interestCategory": "",\n'
-        '      "intent": "",\n'
-        '      "summaryForProfile": "",\n'
-        '      "recommendationHints": [],\n'
-        '      "occurredAt": "",\n'
-        '      "rawMetadata": {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0, "query": ""}\n'
-        "    }\n"
-        "  ]\n"
-        "}\n\n"
-        "task:\n"
-        f"{json.dumps(safe_task, ensure_ascii=False, indent=2)}\n\n"
-        "raw_items:\n"
-        f"{json.dumps(safe_items, ensure_ascii=False, indent=2)}\n"
-    )
-
-
-def run_codex_cli(prompt: str, command: str, timeout: int, verbose: bool = False) -> str:
-    verbose_log(verbose, f"\nCodex CLI command: {command}")
-    verbose_log(verbose, "Codex CLI input follows:")
-    if verbose:
-        print("=" * 72)
-        print(prompt)
-        print("=" * 72)
-    gateway = LLMGateway(command=command, timeout=timeout, env_provider=tool_env, sanitizer=sanitize)
-    resolved = gateway.resolve_command()
-    if not resolved:
-        raise RuntimeError(f"Codex CLI command not found: {command}")
-    args, shell = resolved
-    completed = subprocess.run(
-        args,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        env=tool_env(),
-        shell=shell,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(sanitize(completed.stderr or f"Codex CLI exited with {completed.returncode}", 1000))
-    output = completed.stdout or completed.stderr or ""
-    if verbose:
-        print("\nCodex CLI output")
-        print("=" * 72)
-        print(output)
-        print("=" * 72)
-    return output
-
-
-def analyze_with_codex_cli(task: dict[str, Any], raw_items: list[dict[str, Any]], cfg: WorkerConfig) -> list[dict[str, Any]]:
-    command = cfg.codex_command or "codex"
-    raw_items = enrich_content_for_llm(raw_items, verbose=cfg.verbose)
-    if not find_codex_cli(command):
-        verbose_log(cfg.verbose, f"\nCodex CLI command: {command}")
-        print(f"Warning: Codex CLI not found for command '{command}'. Falling back to raw_items.", file=sys.stderr)
-        return raw_items
-
-    youtube_items: list[dict[str, Any]] = []
-    general_items: list[dict[str, Any]] = []
-    for item in raw_items:
-        if is_valid_youtube_event(item):
-            youtube_items.append(item)
-        else:
-            general_items.append(item)
-
-    analyzed_youtube = [
-        analyze_youtube_item_with_codex(item, command, cfg)
-        for item in youtube_items
-    ]
-    if not general_items:
-        verbose_json(cfg.verbose, "Codex analyzed items", analyzed_youtube)
-        return analyzed_youtube
-
-    prompt = build_codex_prompt(task, general_items)
-    if cfg.verbose:
-        verbose_json(True, "Codex raw_items", general_items)
-
-    if cfg.print_codex_prompt:
-        print("\nCodex prompt")
-        print("=" * 72)
-        print(prompt)
-        print("=" * 72)
-
-    try:
-        output = run_codex_cli(prompt, command, cfg.codex_timeout, verbose=cfg.verbose)
-    except subprocess.TimeoutExpired:
-        print("Warning: Codex CLI timed out. Falling back to raw_items.", file=sys.stderr)
-        return raw_items
-    except Exception as exc:
-        print(f"Warning: Codex CLI failed: {sanitize(exc, 400)}. Falling back to raw_items.", file=sys.stderr)
-        return raw_items
-
-    if cfg.print_codex_output:
-        print("\nCodex output")
-        print("=" * 72)
-        print(output)
-        print("=" * 72)
-
-    try:
-        decoded = parse_codex_json_output(output)
-        analyzed = mark_codex_analysis_items(validate_codex_items(decoded))
-        if has_invented_url(general_items, analyzed):
-            raise ValueError("Codex output invented URL for empty raw_items")
-    except Exception as exc:
-        print(f"Warning: Codex output rejected: {sanitize(exc, 400)}. Falling back to raw_items.", file=sys.stderr)
-        return raw_items
-    final_items = analyzed_youtube + (analyzed or general_items)
-    verbose_json(cfg.verbose, "Codex analyzed items", final_items)
-    return final_items
-
-
-def is_valid_youtube_event(item: dict[str, Any]) -> bool:
-    if not isinstance(item, dict):
-        return False
-    platform = normalize_platform(item.get("platform"), item)
-    event_type = normalize_event_type(item.get("eventType") or item.get("type"), item)
-    url = normalize_url(item.get("url"))
-    video_id = sanitize(item.get("externalId") or external_id_from_url(platform, url), 160)
-    return platform == "youtube" and event_type in {"WATCH", "VISIT", "FAVORITE"} and bool(url or video_id)
-
-
-def youtube_context_from_item(item: dict[str, Any]) -> dict[str, str]:
-    content = content_from_item(item)
-    url = normalize_url(item.get("url"))
-    video_id = sanitize(item.get("externalId") or external_id_from_url("youtube", url), 160)
-    raw_metadata = item.get("rawMetadata") if isinstance(item.get("rawMetadata"), dict) else {}
-    raw_evidence = item.get("rawEvidence") if isinstance(item.get("rawEvidence"), dict) else {}
-    description = sanitize(
-        content.get("description")
-        or item.get("description")
-        or item.get("contentSnippet")
-        or item.get("summary")
-        or raw_metadata.get("description")
-        or raw_evidence.get("description")
-        or "",
-        CONTENT_TEXT_LIMIT,
-    )
-    return {
-        "title": sanitize(content.get("title") or item.get("title") or "", 300),
-        "description": description,
-        "author": sanitize(content.get("author") or item.get("author") or "", 160),
-        "url": normalize_url(content.get("url") or url),
-        "videoId": sanitize(content.get("externalId") or content.get("videoId") or video_id, 160),
-    }
-
-
-def build_youtube_analysis_prompt(context: dict[str, str]) -> str:
-    safe_context = {key: sanitize(value, 1200 if key == "description" else 300) for key, value in context.items()}
-    return (
-        "SYSTEM TASK:\n"
-        "You are analyzing a user's YouTube viewing behavior to build an interest profile.\n\n"
-        "INPUT:\n"
-        "- video title\n"
-        "- description\n"
-        "- channel\n"
-        "- url\n\n"
-        "OUTPUT JSON ONLY:\n"
-        "{\n"
-        '  "summary": "...",\n'
-        '  "tags": ["tag1","tag2","tag3"],\n'
-        '  "interestCategory": "backend | AI | entertainment | education | other",\n'
-        '  "confidence": "HIGH | MEDIUM | LOW"\n'
-        "}\n\n"
-        "RULES:\n"
-        "- tags must reflect content meaning, not system labels\n"
-        "- summary must describe what the video is about\n"
-        "- do NOT include sensitive inference (health, identity, etc.)\n"
-        "- max 5 tags\n"
-        "- output must be strict JSON\n\n"
-        "PUBLIC YOUTUBE CONTEXT:\n"
-        f"{json.dumps(safe_context, ensure_ascii=False, indent=2)}\n"
-    )
-
-
-def analyze_youtube_item_with_codex(item: dict[str, Any], command: str, cfg: WorkerConfig) -> dict[str, Any]:
-    context = youtube_context_from_item(item)
-    verbose_json(cfg.verbose, "YouTube public context for Codex", context)
-    prompt = build_youtube_analysis_prompt(context)
-    try:
-        output = run_codex_cli(prompt, command, cfg.codex_timeout, verbose=cfg.verbose)
-        analysis = validate_youtube_analysis(parse_codex_json_output(output))
-        return apply_youtube_analysis(item, context, analysis)
-    except subprocess.TimeoutExpired:
-        print("Warning: YouTube Codex analysis timed out. Falling back to metadata item.", file=sys.stderr)
-    except Exception as exc:
-        print(f"Warning: YouTube Codex analysis failed: {sanitize(exc, 400)}. Falling back to metadata item.", file=sys.stderr)
-    return sanitize_item(item, allow_sensitive_check=True)
-
-
-def validate_youtube_analysis(decoded: dict[str, Any]) -> dict[str, Any]:
-    if has_sensitive_field(decoded):
-        raise ValueError("sensitive field name found")
-    if contains_sensitive(json.dumps(decoded, ensure_ascii=False)):
-        raise ValueError("sensitive content found")
-    summary = sanitize(decoded.get("summary") or "", SUMMARY_TEXT_LIMIT)
-    if not summary:
-        raise ValueError("summary is required")
-    tags_value = decoded.get("tags")
-    if not isinstance(tags_value, list):
-        raise ValueError("tags must be a list")
-    tags = unique_values([sanitize(tag, 80) for tag in tags_value if sanitize(tag, 80)])[:5]
-    tags = [tag for tag in tags if tag.lower() not in {"youtube", "video", "public-url", "agent-reach", "browser-history"}]
-    category = sanitize(decoded.get("interestCategory") or "other", 40)
-    if category not in YOUTUBE_INTEREST_CATEGORIES:
-        category = "other"
-    confidence = normalize_choice(decoded.get("confidence"), ALLOWED_CONFIDENCE, "MEDIUM")
-    return {
-        "summary": summary,
-        "tags": tags,
-        "interestCategory": category,
-        "confidence": confidence,
-    }
-
-
-def apply_youtube_analysis(item: dict[str, Any], context: dict[str, str], analysis: dict[str, Any]) -> dict[str, Any]:
-    raw_evidence = sanitize_raw_evidence(item.get("rawMetadata") or item.get("rawEvidence"))
-    raw_evidence["domain"] = "youtube.com"
-    raw_evidence["externalId"] = context["videoId"]
-    raw_evidence["url"] = context["url"]
-    raw_evidence["contentSnippet"] = analysis["summary"]
-    raw_evidence["contentType"] = "video"
-    raw_evidence["interestCategory"] = analysis["interestCategory"]
-    raw_evidence["contentCategory"] = analysis["interestCategory"]
-    raw_evidence["originalSource"] = sanitize(item.get("source") or "", 120)
-    raw_evidence["content"] = content_from_item(item)
-    enriched = {
-        **item,
-        "platform": "youtube",
-        "source": "codex-cli-analysis",
-        "eventType": "WATCH",
-        "type": "WATCH",
-        "externalId": context["videoId"],
-        "title": context["title"],
-        "url": context["url"],
-        "author": context["author"],
-        "contentSnippet": analysis["summary"],
-        "summary": analysis["summary"],
-        "tags": analysis["tags"],
-        "interestTags": analysis["tags"],
-        "interestLabels": analysis["tags"],
-        "contentType": "video",
-        "interestCategory": analysis["interestCategory"],
-        "contentCategory": analysis["interestCategory"],
-        "confidence": analysis["confidence"],
-        "dataLevel": "PAGE_VISIBLE_CONTENT",
-        "detectionReason": "public_url_enrichment",
-        "matchedKeyword": context["videoId"] or "youtube.com",
-        "rawMetadata": raw_evidence,
-        "rawEvidence": raw_evidence,
-    }
-    sanitized = sanitize_item(enriched, allow_sensitive_check=True)
-    content_tags = unique_values(analysis["tags"])[:5]
-    sanitized["tags"] = content_tags
-    sanitized["interestTags"] = content_tags
-    sanitized["interestLabels"] = content_tags
-    return sanitized
-
-
-def parse_codex_json_output(output: str) -> dict[str, Any]:
-    text = (output or "").strip()
-    if not text:
-        raise ValueError("empty output")
-    try:
-        decoded = json.loads(text)
-        if isinstance(decoded, dict):
-            return decoded
-    except json.JSONDecodeError:
-        pass
-
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.IGNORECASE | re.DOTALL)
-    if fenced:
-        decoded = json.loads(fenced.group(1))
-        if isinstance(decoded, dict):
-            return decoded
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
-        decoded = json.loads(text[start:end + 1])
-        if isinstance(decoded, dict):
-            return decoded
-    raise ValueError("no JSON object found")
-
-
-def extract_json_object(output: str) -> dict[str, Any]:
-    return parse_codex_json_output(output)
 
 
 def enrich_content_for_llm(items: list[dict[str, Any]], verbose: bool = False) -> list[dict[str, Any]]:
@@ -1085,47 +750,6 @@ def sanitize_content_object(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_codex_items(decoded: dict[str, Any]) -> list[dict[str, Any]]:
-    if has_sensitive_field(decoded):
-        raise ValueError("sensitive field name found")
-    if contains_sensitive(json.dumps(decoded, ensure_ascii=False)):
-        raise ValueError("sensitive content found")
-    rows = decoded.get("items")
-    if not isinstance(rows, list):
-        raise ValueError("items must be a list")
-    sanitized: list[dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        item = sanitize_item(row, allow_sensitive_check=True)
-        if item:
-            sanitized.append(item)
-    return sanitized
-
-
-def mark_codex_analysis_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    marked: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        updated = dict(item)
-        previous_source = sanitize(updated.get("source") or "", 120)
-        raw_evidence = dict(updated.get("rawEvidence") or {}) if isinstance(updated.get("rawEvidence"), dict) else {}
-        if previous_source and not raw_evidence.get("originalSource"):
-            raw_evidence["originalSource"] = previous_source
-        updated["source"] = "codex-cli-analysis"
-        updated["rawEvidence"] = raw_evidence
-        marked.append(updated)
-    return marked
-
-
-def has_invented_url(raw_items: list[dict[str, Any]], analyzed_items: list[dict[str, Any]]) -> bool:
-    raw_urls = [str(item.get("url") or "").strip() for item in raw_items if isinstance(item, dict)]
-    if any(raw_urls):
-        return False
-    return any(str(item.get("url") or "").strip() for item in analyzed_items if isinstance(item, dict))
-
-
 def sanitize_raw_evidence(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {"processName": "", "windowTitle": "", "domain": "", "visitCount": 0}
@@ -1142,7 +766,11 @@ def sanitize_raw_evidence(value: Any) -> dict[str, Any]:
         "contentSnippet": sanitize(value.get("contentSnippet") or "", SUMMARY_TEXT_LIMIT),
         "adapter": sanitize(value.get("adapter") or "", 80),
         "adapterMode": sanitize(value.get("adapterMode") or "", 80),
-        "agentReachCommand": sanitize(value.get("agentReachCommand") or "", 500),
+        "agentReachStatus": sanitize(value.get("agentReachStatus") or "", 40),
+        "agentReachRoute": sanitize(value.get("agentReachRoute") or "", 120),
+        "agentReachBackend": sanitize(value.get("agentReachBackend") or "", 120),
+        "llm_status": sanitize(value.get("llm_status") or "", 40),
+        "llm_latency_ms": 0,
         "originalSource": sanitize(value.get("originalSource") or "", 120),
         "contentType": sanitize(value.get("contentType") or "", 80),
         "interestCategory": sanitize(value.get("interestCategory") or value.get("contentCategory") or "", 120),
@@ -1155,6 +783,10 @@ def sanitize_raw_evidence(value: Any) -> dict[str, Any]:
         safe["visitCount"] = max(0, int(value.get("visitCount") or 0))
     except (TypeError, ValueError):
         safe["visitCount"] = 0
+    try:
+        safe["llm_latency_ms"] = max(0, min(int(value.get("llm_latency_ms") or 0), 600_000))
+    except (TypeError, ValueError):
+        safe["llm_latency_ms"] = 0
     return safe
 
 
@@ -1193,6 +825,18 @@ def normalize_url(value: Any) -> str:
         ))
     except ValueError:
         return ""
+
+
+def extract_public_url(value: Any) -> str:
+    text = sanitize(value or "", 2000).strip()
+    if not text:
+        return ""
+    match = re.search(r"https?://[^\s<>\"',，。；！）》】]+", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    candidate = match.group(0).rstrip(".,;:!?)]}，。；：！？）】》」』’\"")
+    normalized = normalize_url(candidate)
+    return normalized if normalized.startswith(("http://", "https://")) else ""
 
 
 def external_id_from_url(platform: str, url: str) -> str:
@@ -1421,7 +1065,6 @@ def normalize_source(value: Any, item: dict[str, Any]) -> str:
         "local-notes",
         "public-url",
         "codex-cli-analysis",
-        "agent-reach-mock",
         "agent-reach-enrichment",
     }
     if source in allowed:
@@ -1492,11 +1135,20 @@ def collect_task(task: dict[str, Any], cfg: WorkerConfig) -> list[dict[str, Any]
     platform = str(task.get("platform") or "").lower().replace("-", "_")
     intent = str(task.get("intent") or "").lower()
     query = task.get("query") or ""
-    url = task.get("url") or ""
+    supplied_url = task.get("url") or ""
+    url = extract_public_url(supplied_url)
 
     if contains_sensitive(" ".join([platform, intent, str(query), str(url), str(task.get("prompt") or "")])):
         raise RuntimeError("Task contains blocked sensitive keywords.")
 
+    if platform in {"xiaohongshu", "xhs"} and supplied_url and not url:
+        raise RuntimeError("No valid Xiaohongshu public URL was found in the submitted share text.")
+
+    # A supplied public URL is more specific than the legacy app-usage intent.
+    # This keeps Xiaohongshu demo tasks on the URL/Agent Reach path even when
+    # an older client still posts intent=app-usage-summary.
+    if platform in {"xiaohongshu", "xhs"} and str(url).startswith(("http://", "https://")):
+        return collect_xiaohongshu(str(url), str(query), cfg.limit)
     if platform in {"local-terminal", "desktop-app"} or intent == "app-usage-summary":
         return collect_visible_apps(cfg.limit)
     if platform == "local-notes" or intent == "read-note":
@@ -1542,17 +1194,24 @@ def should_enrich_public_url(item: dict[str, Any]) -> bool:
     )
 
 
-def enrich_public_url_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def enrich_public_url_items(
+        items: list[dict[str, Any]], cfg: WorkerConfig | None = None) -> list[dict[str, Any]]:
+    settings = AgentReachSettings(
+        mode=cfg.agent_reach_mode if cfg else "auto",
+        timeout=cfg.agent_reach_timeout if cfg else 30,
+        allow_authenticated_browser=cfg.allow_authenticated_browser if cfg else False,
+    )
+    adapter = AgentReachAdapter(settings)
     enriched: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
         if should_enrich_public_url(item):
             try:
-                enriched.append(enrich_public_url(item))
+                enriched.append(enrich_public_url(item, adapter=adapter))
                 continue
             except Exception as exc:
-                print(f"Warning: Agent Reach mock enrichment failed: {sanitize(exc, 300)}", file=sys.stderr)
+                print(f"Warning: Agent Reach enrichment failed: {sanitize(exc, 300)}", file=sys.stderr)
         enriched.append(item)
     return enriched
 
@@ -1758,6 +1417,7 @@ def collect_baidu_search(query: str, url: str = "") -> list[dict[str, Any]]:
 
 
 def collect_xiaohongshu(url: str, query: str, limit: int) -> list[dict[str, Any]]:
+    url = extract_public_url(url)
     if url.startswith(("http://", "https://")):
         items = collect_browser_or_public_url(url, query, limit)
         domain = domain_from_url(url)
@@ -1769,7 +1429,7 @@ def collect_xiaohongshu(url: str, query: str, limit: int) -> list[dict[str, Any]
                 "Codex local worker accepted a public URL task. "
                 "Only public page metadata and user-provided query text are returned."
             )
-            item["tags"] = sorted(set([*item.get("tags", []), item["platform"], "codex-proxy", "page-visit"]))
+            item["tags"] = sorted(set([*item.get("tags", []), item["platform"], "agent-task", "public-url"]))
         return items
 
     visible_items = collect_visible_apps(limit)
@@ -1782,7 +1442,7 @@ def collect_xiaohongshu(url: str, query: str, limit: int) -> list[dict[str, Any]
     if xhs_items:
         for item in xhs_items:
             item["platform"] = "xiaohongshu"
-            item["tags"] = sorted(set([*item.get("tags", []), "xiaohongshu", "codex-proxy", "visible-window"]))
+            item["tags"] = sorted(set([*item.get("tags", []), "xiaohongshu", "agent-task", "visible-window"]))
         return xhs_items
 
     return [{
@@ -1797,7 +1457,7 @@ def collect_xiaohongshu(url: str, query: str, limit: int) -> list[dict[str, Any]
             "No Xiaohongshu visible window or public note URL was found in this authorized local run. "
             "Open Xiaohongshu web/app or provide a public note URL, then run the worker again."
         ),
-        "tags": ["xiaohongshu", "codex-proxy", "empty-signal"],
+        "tags": ["xiaohongshu", "agent-task", "empty-signal"],
         "confidence": "LOW",
         "dataLevel": "APP_USAGE_SNAPSHOT",
         "detectionReason": "window_title",
@@ -2003,7 +1663,12 @@ def collect_browser_or_public_url(url: str, query: str, limit: int) -> list[dict
             "detectionReason": "url_domain",
             "matchedKeyword": sanitize(query or url, 120),
             "occurredAt": dto_local_datetime(),
-            "rawEvidence": {"processName": "", "windowTitle": "", "domain": domain, "visitCount": 0},
+            "rawEvidence": {
+                "processName": "",
+                "windowTitle": sanitize(query, 160),
+                "domain": domain,
+                "visitCount": 0,
+            },
         }]
 
     history_path = Path("data/imports/browser_history_sample.json")
@@ -2036,8 +1701,34 @@ def collect_browser_or_public_url(url: str, query: str, limit: int) -> list[dict
     } for row in rows[:limit] if isinstance(row, dict)]
 
 
+def require_xiaohongshu_stage(task: dict[str, Any], items: list[dict[str, Any]], stage: str) -> None:
+    platform = str(task.get("platform") or "").lower().replace("-", "_")
+    if platform not in {"xiaohongshu", "xhs"} or not extract_public_url(task.get("url") or ""):
+        return
+    metadata = [
+        item.get("rawMetadata") or item.get("rawEvidence") or {}
+        for item in items if isinstance(item, dict)
+    ]
+    if stage == "agent-reach":
+        if any(str(raw.get("agentReachStatus") or "").upper() == "SUCCESS"
+               for raw in metadata if isinstance(raw, dict)):
+            return
+        raise RuntimeError(
+            "Agent Reach could not read the matching Xiaohongshu browser tab. "
+            "Allow the localhost popup, keep the opened note visible in Chrome, then submit a new task. "
+            "Also confirm OpenCLI, its Chrome extension, Xiaohongshu login, and the one-time authorization."
+        )
+    if stage == "codex":
+        if any(str(raw.get("llm_status") or "").upper() == "SUCCESS"
+               for raw in metadata if isinstance(raw, dict)):
+            return
+        raise RuntimeError(
+            "Codex analysis did not complete. Confirm that Codex CLI is installed and signed in, then retry."
+        )
+
+
 def run_once(cfg: WorkerConfig) -> int:
-    task = claim_next(cfg.base_url)
+    task = claim_next(cfg.base_url, cfg.task_id)
     if not task:
         print("No pending agent query.")
         return 0
@@ -2059,13 +1750,17 @@ def run_once(cfg: WorkerConfig) -> int:
         print("Permission denied. Task marked failed.")
         return 1
 
+    llm_gateway: WorkerLLMGateway | None = None
     try:
+        print("[PIPELINE 1/3] Reading the authorized public URL with Agent Reach...")
         collected_items = collect_task(task, cfg)
         verbose_json(cfg.verbose, "Collected raw items", collected_items)
-        raw_items = enrich_public_url_items(collected_items)
+        raw_items = enrich_public_url_items(collected_items, cfg)
+        require_xiaohongshu_stage(task, raw_items, "agent-reach")
         verbose_json(cfg.verbose, "Agent Reach enriched items", raw_items)
         raw_items = enrich_content_for_llm(raw_items, verbose=cfg.verbose)
         verbose_json(cfg.verbose, "Content enriched items", raw_items)
+        print("[PIPELINE 2/3] Running Codex semantic analysis...")
         llm_gateway = WorkerLLMGateway(
             command=cfg.codex_command,
             timeout=cfg.codex_timeout,
@@ -2073,6 +1768,11 @@ def run_once(cfg: WorkerConfig) -> int:
             sanitizer=sanitize,
         )
         llm_gateway.submit_events(raw_items)
+        # The analyzed fields must be present before ingestion; otherwise the
+        # database only sees placeholders and the personal profile never uses
+        # the Codex result.
+        llm_gateway.wait()
+        require_xiaohongshu_stage(task, raw_items, "codex")
         analyzed_items = raw_items
         result = build_result(analyzed_items)
         verbose_json(cfg.verbose, "behavior_event JSON", {"events": result["items"]})
@@ -2083,17 +1783,14 @@ def run_once(cfg: WorkerConfig) -> int:
             if cfg.direct_behavior_batch:
                 print(json.dumps({"events": result["items"]}, ensure_ascii=False, indent=2))
             print(json.dumps(result, ensure_ascii=False, indent=2))
-            llm_gateway.wait()
-            llm_gateway.shutdown()
             return 0
         if cfg.direct_behavior_batch:
             result.setdefault("metadata", {})["behaviorBatchResponse"] = post_behavior_batch(
                 cfg.base_url, analyzed_items, verbose=cfg.verbose)
+        print("[PIPELINE 3/3] Saving the analyzed visit and refreshing the demo snapshot...")
         response = complete_task(cfg.base_url, task_id, result)
         verbose_json(cfg.verbose, "Task completion response", response)
         print(json.dumps(response, ensure_ascii=False, indent=2))
-        llm_gateway.wait()
-        llm_gateway.shutdown()
         return 0
     except Exception as exc:
         payload = {"success": False, "errorMessage": sanitize(str(exc), 1000)}
@@ -2104,42 +1801,50 @@ def run_once(cfg: WorkerConfig) -> int:
                 print(f"Failed to post failure callback: {callback_exc}", file=sys.stderr)
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=sys.stderr)
         return 2
+    finally:
+        if llm_gateway is not None:
+            llm_gateway.shutdown()
 
 
 def parse_args() -> WorkerConfig:
     parser = argparse.ArgumentParser(description="Claim and execute authorized Agent/Codex query tasks.")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Spring Boot backend base URL.")
+    parser.add_argument("--task-id", default="", help="Claim this exact task instead of the oldest pending task.")
     parser.add_argument("--once", action="store_true", help="Claim one task and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Print result instead of posting completion.")
     parser.add_argument("--yes", action="store_true", help="Skip interactive confirmation. Use only in trusted local runs.")
     parser.add_argument("--allowed-dir", action="append", default=[], help="Allowed local directory. Can be repeated.")
     parser.add_argument("--limit", type=int, default=20, help="Maximum items returned by a collector.")
     parser.add_argument("--poll-seconds", type=float, default=10.0, help="Polling interval when running continuously.")
-    parser.add_argument("--use-codex-cli", action="store_true",
-                        help="Compatibility flag. Real-time Codex/LLM analysis is triggered automatically per event.")
-    parser.add_argument("--codex-command", default="codex", help="Codex CLI command. Defaults to 'codex'.")
-    parser.add_argument("--print-codex-prompt", action="store_true", help="Print the prompt sent to Codex CLI.")
-    parser.add_argument("--print-codex-output", action="store_true", help="Print raw Codex CLI output.")
+    parser.add_argument("--codex-command", default=DEFAULT_CODEX_COMMAND,
+                        help="Non-interactive Codex CLI command used for isolated JSON analysis.")
     parser.add_argument("--codex-timeout", type=int, default=60, help="Seconds to wait for Codex CLI analysis.")
+    parser.add_argument("--agent-reach-mode", choices=("auto", "live", "off"), default="auto",
+                        help="Agent Reach URL enrichment mode. 'auto' uses installed public channel tools.")
+    parser.add_argument("--agent-reach-timeout", type=int, default=30,
+                        help="Seconds to wait for each Agent Reach channel command.")
+    parser.add_argument("--allow-authenticated-browser", action="store_true",
+                        help="Allow OpenCLI to reuse an existing browser login for a supplied public URL. Credentials are never exported.")
     parser.add_argument("--direct-behavior-batch", action="store_true",
                         help="POST normalized items directly to /api/v1/behavior-events/batch, then complete the task without duplicate ingestion.")
     parser.add_argument("--verbose", action="store_true", help="Print task, Agent Reach, Codex CLI, behavior event, and backend POST traces.")
     args = parser.parse_args()
     return WorkerConfig(
         base_url=args.base_url,
+        task_id=args.task_id,
         once=args.once,
         dry_run=args.dry_run,
         yes=args.yes,
         allowed_dirs=args.allowed_dir or DEFAULT_ALLOWED_DIRS,
         limit=max(1, min(args.limit, 100)),
         poll_seconds=max(1.0, args.poll_seconds),
-        use_codex_cli=args.use_codex_cli,
         codex_command=args.codex_command,
-        print_codex_prompt=args.print_codex_prompt,
-        print_codex_output=args.print_codex_output,
         codex_timeout=max(1, args.codex_timeout),
         direct_behavior_batch=args.direct_behavior_batch,
         verbose=args.verbose,
+        agent_reach_mode=args.agent_reach_mode,
+        agent_reach_timeout=max(1, args.agent_reach_timeout),
+        allow_authenticated_browser=args.allow_authenticated_browser,
     )
 
 

@@ -232,7 +232,7 @@ class CodexAgentModuleTest {
                   "grantedScopes": ["APP_USAGE_SUMMARY", "BROWSER_HISTORY", "PUBLIC_URL_METADATA", "LOCAL_NOTES"],
                   "allowedApps": ["com.xingin.xhs", "com.tencent.mm", "com.ss.android.ugc.aweme", "com.google.android.youtube", "tv.danmaku.bili"],
                   "allowedDomains": ["xiaohongshu.com", "weixin.qq.com", "douyin.com", "youtube.com", "bilibili.com", "zhihu.com", "github.com", "csdn.net", "juejin.cn"],
-                  "allowedPaths": ["data/raw", "data/imports", "data/local-notes"],
+                  "allowedPaths": ["data/raw", "data/imports", "data/local-notes", "src/test/resources/fixtures/codex-agent/local-notes"],
                   "privacy": {"sanitize": true, "keepRawText": false, "allowSensitiveData": false},
                   "expireAt": "%s"
                 }

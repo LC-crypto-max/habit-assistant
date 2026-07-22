@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -50,17 +51,21 @@ class LLMGateway:
             )
         args, shell = resolved
         try:
-            completed = subprocess.run(
-                args,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout,
-                env=self.env_provider(),
-                shell=shell,
-            )
+            # Run the analyzer away from the repository so the model only sees
+            # the supplied public context, not unrelated local project files.
+            with tempfile.TemporaryDirectory(prefix="habit-assistant-codex-") as isolated_dir:
+                completed = subprocess.run(
+                    args,
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=self.timeout,
+                    env=self.env_provider(),
+                    shell=shell,
+                    cwd=isolated_dir,
+                )
             latency_ms = int((time.perf_counter() - started) * 1000)
             if completed.returncode != 0:
                 return LLMGatewayResult(
@@ -95,7 +100,8 @@ class LLMGateway:
         args = [executable, *parts[1:]]
         suffix = os.path.splitext(executable)[1].lower()
         if os.name == "nt" and suffix in {".bat", ".cmd"}:
-            return subprocess.list2cmdline(args), True
+            command_line = subprocess.list2cmdline(args)
+            return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", command_line], False
         return args, False
 
 

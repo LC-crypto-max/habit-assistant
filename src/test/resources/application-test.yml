@@ -26,9 +26,9 @@ codex-data-agent:
     recommendations-path: target/codex-agent-test/recommendations
   sources:
     app-usage-summary:
-      sample-file: data/imports/app_usage_sample.json
+      sample-file: src/test/resources/fixtures/codex-agent/app_usage_sample.json
     browser-history:
-      sample-file: data/imports/browser_history_sample.json
+      sample-file: src/test/resources/fixtures/codex-agent/browser_history_sample.json
 
 assistant:
   user-id: test-user
@@ -78,5 +78,5 @@ assistant:
     enabled: false
     base-url: http://localhost:8080
     script-path: scripts/codex_query_worker.py
-    python-command: py -3
+    python-command: auto
     limit: 20

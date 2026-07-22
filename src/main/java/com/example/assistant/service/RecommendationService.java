@@ -602,7 +602,7 @@ public class RecommendationService {
                         content.getAuthor(),
                         content.getSummary(),
                         content.getPublishedAt(),
-                        content.getTags()),
+                        content.getTags() == null ? List.of() : List.copyOf(content.getTags())),
                 basedOnEvidence(recommendation.getUserId(), content));
     }
 

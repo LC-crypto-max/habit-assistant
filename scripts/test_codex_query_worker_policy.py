@@ -4,7 +4,6 @@ import json
 import pathlib
 import re
 import sys
-import types
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -86,7 +85,7 @@ class ResultCallbackContractTest(unittest.TestCase):
         self.assertIn("Douyin", tags)
 
 
-class CodexCliAnalysisTest(unittest.TestCase):
+class WorkerPolicyAndAnalysisTest(unittest.TestCase):
     def cfg(self):
         return worker.WorkerConfig(
             base_url="http://localhost:8080",
@@ -96,122 +95,11 @@ class CodexCliAnalysisTest(unittest.TestCase):
             allowed_dirs=["data/imports"],
             limit=20,
             poll_seconds=1.0,
-            use_codex_cli=True,
             codex_command="codex",
-            print_codex_prompt=False,
-            print_codex_output=False,
             codex_timeout=5,
             direct_behavior_batch=False,
             verbose=False,
         )
-
-    def raw_item(self):
-        return [{
-            "platform": "desktop-app",
-            "source": "visible-window",
-            "type": "APP_USAGE",
-            "externalId": "chrome-1",
-            "title": "Visible app: chrome",
-            "url": "",
-            "author": "",
-            "summary": "Current visible-window snapshot only. Window title: 小红书 - Chrome",
-            "tags": ["visible-window", "Xiaohongshu"],
-            "occurredAt": "2026-06-06T16:21:05",
-            "rawEvidence": {"processName": "chrome", "windowTitle": "小红书 - Chrome", "domain": "", "visitCount": 0},
-        }]
-
-    def raw_url_item(self):
-        item = dict(self.raw_item()[0])
-        item["url"] = "https://www.xiaohongshu.com/explore/demo"
-        item["source"] = "public-url"
-        item["confidence"] = "MEDIUM"
-        item["dataLevel"] = "PUBLIC_URL"
-        item["rawEvidence"] = {"processName": "", "windowTitle": "", "domain": "xiaohongshu.com", "visitCount": 0}
-        return [item]
-
-    def test_codex_cli_missing_falls_back_to_raw_items(self):
-        cfg = self.cfg()
-        with patch.object(worker, "find_codex_cli", return_value=None):
-            analyzed = worker.analyze_with_codex_cli({"platform": "xiaohongshu"}, self.raw_item(), cfg)
-
-        self.assertEqual(analyzed[0]["platform"], "desktop-app")
-        self.assertIn("content", analyzed[0]["rawMetadata"])
-
-    def test_codex_cli_valid_json_is_used(self):
-        cfg = self.cfg()
-        output = json.dumps({
-            "items": [{
-                "platform": "xiaohongshu",
-                "type": "VISIT",
-                "externalId": "xhs-1",
-                "title": "小红书 AI 笔记",
-                "url": "https://www.xiaohongshu.com/explore/demo",
-                "author": "",
-                "summary": "用户访问了 AI 工作流相关公开笔记。",
-                "tags": ["xiaohongshu", "AI"],
-                "interestLabels": ["小红书", "生活方式"],
-                "recommendationHints": ["继续推荐生活方式和 AI 工作流内容"],
-                "confidence": "MEDIUM",
-                "dataLevel": "PUBLIC_URL",
-                "detectionReason": "url_domain",
-                "matchedKeyword": "xiaohongshu.com",
-                "occurredAt": "2026-06-06T16:21:05",
-            }]
-        }, ensure_ascii=False)
-        with patch.object(worker, "find_codex_cli", return_value="codex"), \
-                patch.object(worker, "run_codex_cli", return_value=output):
-            analyzed = worker.analyze_with_codex_cli({"platform": "xiaohongshu"}, self.raw_url_item(), cfg)
-
-        self.assertEqual(analyzed[0]["platform"], "xiaohongshu")
-        self.assertEqual(analyzed[0]["confidence"], "MEDIUM")
-        self.assertEqual(analyzed[0]["dataLevel"], "PUBLIC_URL")
-        self.assertIn("小红书", analyzed[0]["interestLabels"])
-        self.assertIn("生活方式", analyzed[0]["tags"])
-        self.assertNotIn("cookie", analyzed[0])
-
-    def test_codex_cli_cannot_invent_url_for_empty_raw_items(self):
-        cfg = self.cfg()
-        output = json.dumps({
-            "items": [{
-                "platform": "xiaohongshu",
-                "type": "VISIT",
-                "title": "invented",
-                "url": "https://www.xiaohongshu.com/explore/invented",
-                "summary": "invented page",
-            }]
-        }, ensure_ascii=False)
-        with patch.object(worker, "find_codex_cli", return_value="codex"), \
-                patch.object(worker, "run_codex_cli", return_value=output):
-            analyzed = worker.analyze_with_codex_cli({"platform": "xiaohongshu"}, self.raw_item(), cfg)
-
-        self.assertEqual(analyzed[0]["platform"], "desktop-app")
-        self.assertIn("content", analyzed[0]["rawMetadata"])
-
-    def test_codex_cli_non_json_falls_back(self):
-        cfg = self.cfg()
-        with patch.object(worker, "find_codex_cli", return_value="codex"), \
-                patch.object(worker, "run_codex_cli", return_value="Here is a summary without JSON"):
-            analyzed = worker.analyze_with_codex_cli({"platform": "xiaohongshu"}, self.raw_item(), cfg)
-
-        self.assertEqual(analyzed[0]["platform"], "desktop-app")
-        self.assertIn("content", analyzed[0]["rawMetadata"])
-
-    def test_codex_cli_sensitive_field_falls_back(self):
-        cfg = self.cfg()
-        output = json.dumps({
-            "items": [{
-                "platform": "xiaohongshu",
-                "title": "bad",
-                "cookie": "cookie=secret",
-                "summary": "bad",
-            }]
-        })
-        with patch.object(worker, "find_codex_cli", return_value="codex"), \
-                patch.object(worker, "run_codex_cli", return_value=output):
-            analyzed = worker.analyze_with_codex_cli({"platform": "xiaohongshu"}, self.raw_item(), cfg)
-
-        self.assertEqual(analyzed[0]["platform"], "desktop-app")
-        self.assertIn("content", analyzed[0]["rawMetadata"])
 
     def test_visible_window_defaults_to_low_confidence(self):
         item = worker.sanitize_item({
@@ -357,7 +245,7 @@ class CodexCliAnalysisTest(unittest.TestCase):
         self.assertEqual(terminal["confidence"], "LOW")
         self.assertEqual(text_input["dataLevel"], "APP_USAGE_SNAPSHOT")
 
-    def test_browser_history_item_is_enriched_before_codex(self):
+    def test_browser_history_keeps_original_trust_when_agent_reach_is_unavailable(self):
         items = worker.enrich_public_url_items([{
             "userId": "me",
             "platform": "browser",
@@ -379,14 +267,60 @@ class CodexCliAnalysisTest(unittest.TestCase):
         normalized = worker.normalize_result_item(items[0])
 
         self.assertEqual(normalized["platform"], "bilibili")
-        self.assertEqual(normalized["source"], "agent-reach-enrichment")
-        self.assertEqual(normalized["eventType"], "WATCH")
-        self.assertEqual(normalized["type"], "WATCH")
-        self.assertEqual(normalized["contentType"], "video")
-        self.assertEqual(normalized["interestCategory"], "video")
-        self.assertEqual(normalized["detectionReason"], "public_url_enrichment")
+        self.assertEqual(normalized["source"], "browser-history")
+        self.assertEqual(normalized["eventType"], "VISIT")
+        self.assertEqual(normalized["type"], "VISIT")
+        self.assertEqual(normalized["confidence"], "MEDIUM")
+        self.assertEqual(normalized["dataLevel"], "BROWSER_HISTORY")
         self.assertIn("Java后端", normalized["tags"])
         self.assertEqual(normalized["rawEvidence"]["adapter"], "agent-reach")
+        self.assertEqual(normalized["rawEvidence"]["adapterMode"], "fallback")
+
+    def test_xiaohongshu_url_overrides_legacy_app_usage_intent(self):
+        task = {
+            "platform": "xiaohongshu",
+            "intent": "app-usage-summary",
+            "url": "https://www.xiaohongshu.com/explore/demo",
+            "query": "读取公开笔记",
+        }
+        expected = [{"platform": "xiaohongshu", "url": task["url"]}]
+
+        with patch.object(worker, "collect_xiaohongshu", return_value=expected) as xhs_collector, \
+                patch.object(worker, "collect_visible_apps") as window_collector:
+            result = worker.collect_task(task, self.cfg())
+
+        self.assertEqual(result, expected)
+        xhs_collector.assert_called_once_with(task["url"], task["query"], 20)
+        window_collector.assert_not_called()
+
+    def test_agent_reach_and_llm_status_survive_safe_normalization(self):
+        normalized = worker.normalize_result_item({
+            "platform": "xiaohongshu",
+            "source": "codex-cli-analysis",
+            "eventType": "VISIT",
+            "title": "小红书公开笔记",
+            "url": "https://www.xiaohongshu.com/explore/demo",
+            "summary": "公开内容的 AI 摘要。",
+            "confidence": "HIGH",
+            "dataLevel": "PAGE_VISIBLE_CONTENT",
+            "rawEvidence": {
+                "adapter": "agent-reach",
+                "adapterMode": "live",
+                "agentReachStatus": "SUCCESS",
+                "agentReachRoute": "opencli-xiaohongshu-note",
+                "agentReachBackend": "opencli",
+                "llm_status": "SUCCESS",
+                "llm_latency_ms": 1234,
+                "agentReachCommand": "must-not-be-persisted",
+            },
+        })
+
+        evidence = normalized["rawEvidence"]
+        self.assertEqual(evidence["agentReachStatus"], "SUCCESS")
+        self.assertEqual(evidence["agentReachBackend"], "opencli")
+        self.assertEqual(evidence["llm_status"], "SUCCESS")
+        self.assertEqual(evidence["llm_latency_ms"], 1234)
+        self.assertNotIn("agentReachCommand", evidence)
 
     def test_content_enrichment_adds_structured_object_for_url_event(self):
         items = worker.enrich_content_for_llm([{
@@ -424,124 +358,6 @@ class CodexCliAnalysisTest(unittest.TestCase):
         self.assertEqual(content["contentType"], "video")
         self.assertEqual(content["externalId"], "BV1demo")
         self.assertEqual(content["fetchedBy"], "event-public-metadata")
-
-    def test_codex_analysis_items_use_standard_behavior_event_fields(self):
-        output = json.dumps({
-            "items": [{
-                "userId": "me",
-                "platform": "web",
-                "eventType": "VISIT",
-                "source": "agent-reach-enrichment",
-                "title": "OpenAI Codex repository",
-                "url": "https://github.com/openai/codex",
-                "summary": "Public GitHub repository.",
-                "tags": ["github", "codex"],
-                "contentType": "repository-or-code-page",
-                "interestCategory": "developer-tooling",
-                "confidence": "HIGH",
-                "dataLevel": "PAGE_VISIBLE_CONTENT",
-                "detectionReason": "public_url_enrichment",
-                "rawEvidence": {"domain": "github.com", "adapter": "agent-reach"},
-            }]
-        }, ensure_ascii=False)
-        with patch.object(worker, "find_codex_cli", return_value="codex"), \
-                patch.object(worker, "run_codex_cli", return_value=output):
-            analyzed = worker.analyze_with_codex_cli({"platform": "github"}, self.raw_url_item(), self.cfg())
-
-        item = analyzed[0]
-        self.assertEqual(item["eventType"], "VISIT")
-        self.assertEqual(item["type"], "VISIT")
-        self.assertEqual(item["source"], "codex-cli-analysis")
-        self.assertEqual(item["platform"], "github")
-        self.assertEqual(item["interestCategory"], "developer-tooling")
-        self.assertEqual(item["contentCategory"], "developer-tooling")
-        self.assertEqual(item["rawEvidence"]["originalSource"], "agent-reach-enrichment")
-
-    def test_youtube_codex_analysis_overwrites_placeholder_tags(self):
-        cfg = self.cfg()
-        raw_item = {
-            "userId": "me",
-            "platform": "youtube",
-            "source": "public-url",
-            "eventType": "WATCH",
-            "type": "WATCH",
-            "externalId": "yt123456",
-            "title": "Spring Boot Redis caching tutorial",
-            "url": "https://www.youtube.com/watch?v=yt123456&utm_source=share",
-            "author": "Backend Channel",
-            "description": "A tutorial about Spring Boot, Redis caching, APIs, and backend performance.",
-            "summary": "placeholder",
-            "tags": ["youtube", "public-url", "agent-reach"],
-            "confidence": "MEDIUM",
-            "dataLevel": "PUBLIC_URL",
-            "rawEvidence": {"domain": "youtube.com", "description": "public description"},
-        }
-        output = json.dumps({
-            "summary": "This video explains Spring Boot Redis caching for backend APIs.",
-            "tags": ["spring boot", "redis", "backend"],
-            "interestCategory": "backend",
-            "confidence": "HIGH",
-        })
-
-        with patch.object(worker, "find_codex_cli", return_value="codex"), \
-                patch.object(worker, "run_codex_cli", return_value=output) as run_codex:
-            analyzed = worker.analyze_with_codex_cli({"platform": "youtube"}, [raw_item], cfg)
-
-        item = analyzed[0]
-        self.assertEqual(item["platform"], "youtube")
-        self.assertEqual(item["source"], "codex-cli-analysis")
-        self.assertEqual(item["eventType"], "WATCH")
-        self.assertEqual(item["url"], "https://www.youtube.com/watch?v=yt123456")
-        self.assertEqual(item["summary"], "This video explains Spring Boot Redis caching for backend APIs.")
-        self.assertEqual(item["tags"], ["spring boot", "redis", "backend"])
-        self.assertEqual(item["interestCategory"], "backend")
-        self.assertEqual(item["confidence"], "HIGH")
-        self.assertNotIn("youtube", item["tags"])
-        prompt = run_codex.call_args.args[0]
-        self.assertIn("SYSTEM TASK:", prompt)
-        self.assertIn("PUBLIC YOUTUBE CONTEXT", prompt)
-        self.assertIn("Spring Boot Redis caching tutorial", prompt)
-
-    def test_youtube_prompt_uses_structured_content_object(self):
-        item = worker.enrich_content_for_llm([{
-            "platform": "youtube",
-            "source": "public-url",
-            "eventType": "WATCH",
-            "externalId": "yt123456",
-            "title": "Placeholder title",
-            "url": "https://www.youtube.com/watch?v=yt123456",
-            "summary": "Placeholder summary",
-            "rawEvidence": {
-                "content": {
-                    "platform": "youtube",
-                    "contentType": "video",
-                    "url": "https://www.youtube.com/watch?v=yt123456",
-                    "externalId": "yt123456",
-                    "videoId": "yt123456",
-                    "title": "Structured title",
-                    "description": "Structured public description",
-                    "author": "Structured channel",
-                    "transcript": "Structured transcript text",
-                    "fetchedBy": "yt-dlp-public-metadata",
-                }
-            },
-        }])[0]
-
-        context = worker.youtube_context_from_item(item)
-
-        self.assertEqual(context["title"], "Structured title")
-        self.assertEqual(context["description"], "Structured public description")
-        self.assertEqual(context["author"], "Structured channel")
-
-    def test_youtube_analysis_rejects_system_labels_from_tags(self):
-        analysis = worker.validate_youtube_analysis({
-            "summary": "A backend tutorial.",
-            "tags": ["youtube", "video", "redis", "backend", "agent-reach"],
-            "interestCategory": "backend",
-            "confidence": "HIGH",
-        })
-
-        self.assertEqual(analysis["tags"], ["redis", "backend"])
 
     def test_verbose_behavior_batch_logs_url_payload_and_response(self):
         item = {
@@ -637,6 +453,59 @@ class CodexCliAnalysisTest(unittest.TestCase):
         self.assertEqual(item["rawMetadata"]["llm_status"], "SUCCESS")
         analyzer.shutdown()
 
+    def test_worker_waits_for_llm_before_posting_behavior_batch(self):
+        order = []
+        event = {
+            "userId": "me",
+            "platform": "web",
+            "source": "browser-history",
+            "eventType": "VISIT",
+            "url": "https://example.com/spring",
+            "title": "Spring article",
+            "summary": "browser placeholder",
+            "confidence": "MEDIUM",
+            "dataLevel": "BROWSER_HISTORY",
+        }
+
+        class FakeGateway:
+            def __init__(self, **_kwargs):
+                self.items = []
+
+            def submit_events(self, items):
+                self.items = items
+                order.append("submit")
+
+            def wait(self):
+                self.items[0]["summary"] = "final Codex summary"
+                self.items[0]["tags"] = ["spring"]
+                self.items[0]["source"] = "codex-cli-analysis"
+                order.append("wait")
+
+            def shutdown(self):
+                order.append("shutdown")
+
+        def post_batch(_base_url, items, verbose=False):
+            self.assertFalse(verbose)
+            self.assertEqual(items[0]["summary"], "final Codex summary")
+            order.append("post")
+            return {"imported": 1}
+
+        cfg = self.cfg()
+        cfg.dry_run = False
+        cfg.direct_behavior_batch = True
+        cfg.agent_reach_mode = "off"
+        with patch.object(worker, "claim_next", return_value={"taskId": "task-1"}), \
+                patch.object(worker, "collect_task", return_value=[event]), \
+                patch.object(worker, "enrich_public_url_items", side_effect=lambda items, _cfg: items), \
+                patch.object(worker, "enrich_content_for_llm", side_effect=lambda items, verbose=False: items), \
+                patch.object(worker, "WorkerLLMGateway", FakeGateway), \
+                patch.object(worker, "post_behavior_batch", side_effect=post_batch), \
+                patch.object(worker, "complete_task", return_value={"success": True}):
+            code = worker.run_once(cfg)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(order, ["submit", "wait", "post", "shutdown"])
+
     def test_llm_gateway_resolves_windows_cmd_without_winerror2(self):
         gateway = llm_gateway.LLMGateway(
             command="codex exec",
@@ -649,21 +518,48 @@ class CodexCliAnalysisTest(unittest.TestCase):
 
         self.assertIsNotNone(resolved)
         args, shell = resolved
-        self.assertTrue(shell)
-        self.assertIn("codex.cmd", args)
-        self.assertIn("exec", args)
+        self.assertFalse(shell)
+        self.assertIn("cmd.exe", args[0].lower())
+        self.assertIn("codex.cmd", args[-1])
+        self.assertIn("exec", args[-1])
 
-    def test_legacy_run_codex_cli_uses_gateway_resolution_for_windows_cmd(self):
-        cfg = self.cfg()
-        completed = types.SimpleNamespace(returncode=0, stdout='{"ok": true}', stderr="")
-        with patch.object(worker.LLMGateway, "resolve_command",
-                          return_value=(r"C:\Users\Lenovo\AppData\Roaming\npm\codex.cmd exec", True)), \
-                patch.object(worker.subprocess, "run", return_value=completed) as run:
-            output = worker.run_codex_cli("prompt", cfg.codex_command, cfg.codex_timeout)
 
-        self.assertEqual(output, '{"ok": true}')
-        self.assertTrue(run.call_args.kwargs["shell"])
-        self.assertIn("codex.cmd", run.call_args.args[0])
+    def test_extract_public_url_from_xiaohongshu_share_text_and_strip_tokens(self):
+        value = worker.extract_public_url(
+            "5【公开笔记】 https://www.xiaohongshu.com/explore/demo-note"
+            "?xsec_token=secret&utm_source=share&foo=bar，复制后打开"
+        )
+
+        self.assertEqual(value, "https://www.xiaohongshu.com/explore/demo-note?foo=bar")
+        self.assertNotIn("secret", value)
+        self.assertNotIn("xsec_token", value)
+
+    def test_codex_skips_xiaohongshu_when_agent_reach_failed(self):
+        analyzer = codex_analyzer.CodexAnalyzer(
+            command="missing-codex-command",
+            env_provider=lambda: {},
+            sanitizer=worker.sanitize,
+        )
+        item = {
+            "platform": "xiaohongshu",
+            "eventType": "VISIT",
+            "url": "https://xhslink.com/a/demo",
+            "rawMetadata": {"agentReachStatus": "FAILED"},
+        }
+        try:
+            self.assertFalse(analyzer.should_analyze(item))
+        finally:
+            analyzer.shutdown()
+
+    def test_xiaohongshu_task_requires_real_agent_reach_success(self):
+        task = {
+            "platform": "xiaohongshu",
+            "url": "https://xhslink.com/a/demo",
+        }
+        items = [{"rawMetadata": {"agentReachStatus": "FAILED"}}]
+
+        with self.assertRaisesRegex(RuntimeError, "Agent Reach could not read"):
+            worker.require_xiaohongshu_stage(task, items, "agent-reach")
 
 
 if __name__ == "__main__":

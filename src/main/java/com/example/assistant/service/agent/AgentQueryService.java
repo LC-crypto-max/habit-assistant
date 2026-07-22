@@ -24,12 +24,14 @@ public class AgentQueryService {
     private final AgentQueryTaskRepository repository;
     private final AgentTaskService agentTaskService;
     private final UserContext userContext;
+    private final PublicLinkNormalizer publicLinkNormalizer;
 
     public AgentQueryService(AgentQueryTaskRepository repository, AgentTaskService agentTaskService,
-            UserContext userContext) {
+            UserContext userContext, PublicLinkNormalizer publicLinkNormalizer) {
         this.repository = repository;
         this.agentTaskService = agentTaskService;
         this.userContext = userContext;
+        this.publicLinkNormalizer = publicLinkNormalizer;
     }
 
     @Transactional
@@ -38,6 +40,11 @@ public class AgentQueryService {
         String adapter = normalize(firstNonBlank(request.adapter(), "agent-reach"));
         String platform = normalize(request.platform());
         String intent = normalize(request.intent());
+        String publicUrl = publicLinkNormalizer.extractAndSanitize(request.url(), platform);
+        if (request.url() != null && !request.url().isBlank() && publicUrl == null) {
+            throw new IllegalArgumentException("PUBLIC_URL_INVALID_OR_PLATFORM_MISMATCH");
+        }
+        String query = limit(blankToNull(request.query()), 512);
         String taskId = "query-" + UUID.randomUUID();
         AgentQueryTask task = new AgentQueryTask(
                 taskId,
@@ -45,9 +52,9 @@ public class AgentQueryService {
                 adapter,
                 platform,
                 intent,
-                blankToNull(request.url()),
-                blankToNull(request.query()),
-                prompt(userId, adapter, platform, intent, request.url(), request.query()));
+                limit(publicUrl, 1024),
+                query,
+                limit(prompt(userId, adapter, platform, intent, publicUrl, query), 3000));
         return toResponse(repository.save(task));
     }
 
@@ -55,6 +62,16 @@ public class AgentQueryService {
     public AgentQueryTaskResponse claimNext() {
         AgentQueryTask task = repository.findFirstByStatusOrderByCreatedAtAsc(AgentQueryStatus.PENDING)
                 .orElseThrow(() -> new IllegalArgumentException("NO_PENDING_AGENT_QUERY"));
+        task.markRunning();
+        return toResponse(task);
+    }
+
+    @Transactional
+    public AgentQueryTaskResponse claim(String taskId) {
+        AgentQueryTask task = findTask(taskId);
+        if (task.getStatus() != AgentQueryStatus.PENDING) {
+            throw new IllegalArgumentException("AGENT_QUERY_NOT_PENDING");
+        }
         task.markRunning();
         return toResponse(task);
     }
@@ -153,6 +170,13 @@ public class AgentQueryService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String limit(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 
     private String firstNonBlank(String... values) {

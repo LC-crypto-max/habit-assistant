@@ -31,12 +31,16 @@ application-prod.yml
 application-prod.properties
 src/main/resources/application-prod.yml
 src/main/resources/application-prod.properties
+config/application-mysql-local.yml
 
 # Frontend build outputs
 node_modules/
+frontend/node_modules/
 dist/
 build/
 .cache/
+.local-tools/
+.npm-cache/
 
 # Python cache
 __pycache__/

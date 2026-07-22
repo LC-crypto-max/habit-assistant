@@ -38,6 +38,11 @@ public class AgentQueryController {
         return agentQueryService.claimNext();
     }
 
+    @PostMapping("/{taskId}/claim")
+    public AgentQueryTaskResponse claim(@PathVariable String taskId) {
+        return agentQueryService.claim(taskId);
+    }
+
     @PostMapping("/{taskId}/result")
     public AgentQueryResultResponse complete(@PathVariable String taskId,
             @Valid @RequestBody AgentQueryResultRequest request) {
